@@ -18,7 +18,7 @@ Return JSON with fields:
 - root_cause_analysis: why mismatch occurred
 - correct_approach: how to rewrite for better style fit
 - key_insight: one compact style rule worth memorizing
-- bullet_tags: list of {id, tag}
+- bullet_tags: list of {{id, tag}}
 
 **Question:**
 {}
@@ -70,7 +70,7 @@ Return JSON with fields:
 - root_cause_analysis: why mismatch occurred
 - correct_approach: how to rewrite for better style fit
 - key_insight: one compact style rule worth memorizing
-- bullet_tags: list of {id, tag}
+- bullet_tags: list of {{id, tag}}
 
 **Question:**
 {}

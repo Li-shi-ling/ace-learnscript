@@ -57,6 +57,7 @@ class DataProcessor:
         self.critic_model = critic_model
         self.pass_threshold = pass_threshold
         self._last_feedback = ""
+        self._score_cache: Dict[Tuple[str, str], Tuple[int, str]] = {}
 
         api_key = os.getenv("OPENAI_API_KEY", "")
         self.critic_client = openai.OpenAI(api_key=api_key) if api_key else None
@@ -80,6 +81,16 @@ class DataProcessor:
         ratio = SequenceMatcher(None, predicted.strip().lower(), ground_truth.strip().lower()).ratio()
         score = max(1, min(10, int(round(ratio * 10))))
         return score, f"Fallback lexical similarity score (ratio={ratio:.2f})"
+
+    def _get_or_score(self, predicted: str, ground_truth: str) -> Tuple[int, str]:
+        """Get style score from cache or compute it once."""
+        cache_key = (predicted, ground_truth)
+        if cache_key in self._score_cache:
+            return self._score_cache[cache_key]
+
+        score, rationale = self._score_style(predicted, ground_truth)
+        self._score_cache[cache_key] = (score, rationale)
+        return score, rationale
 
     def _score_style(self, predicted: str, ground_truth: str, context: str = "", question: str = "") -> Tuple[int, str]:
         prompt = STYLE_CRITIC_PROMPT.format(
@@ -112,7 +123,7 @@ class DataProcessor:
             return score, f"{rationale}; critic_call_error={type(exc).__name__}"
 
     def answer_is_correct(self, predicted: str, ground_truth: str) -> bool:
-        score, rationale = self._score_style(predicted, ground_truth)
+        score, rationale = self._get_or_score(predicted, ground_truth)
         self._last_feedback = f"Style score={score}/10. {rationale}"
         return score >= self.pass_threshold
 
@@ -123,7 +134,7 @@ class DataProcessor:
         passed = 0
         total_score = 0
         for predicted, ground_truth in zip(out, target):
-            score, _ = self._score_style(predicted, ground_truth)
+            score, _ = self._get_or_score(predicted, ground_truth)
             total_score += score
             if score >= self.pass_threshold:
                 passed += 1
