@@ -39,8 +39,7 @@ class ACE:
         max_tokens: int = 4096,
         initial_playbook: Optional[str] = None,
         use_bulletpoint_analyzer: bool = False,
-        bulletpoint_analyzer_threshold: float = 0.90,
-        playbook_template: str = "task"
+        bulletpoint_analyzer_threshold: float = 0.90
     ):
         """
         Initialize the ACE system.
@@ -84,7 +83,6 @@ class ACE:
         self.max_tokens = max_tokens
         
         # Initialize playbook
-        self.playbook_template = playbook_template
         if initial_playbook:
             self.playbook = initial_playbook
         else:
@@ -95,20 +93,7 @@ class ACE:
         self.next_global_id = 1
     
     def _initialize_empty_playbook(self) -> str:
-        """Initialize an empty playbook with a template appropriate for the task."""
-        if self.playbook_template == "style":
-            return """## TONE & MANNER
-
-## VOCABULARY PREFERENCES
-
-## SYNTAX & STRUCTURE
-
-## CATCHPHRASES
-
-## STYLISTIC TABOOS
-
-## OTHERS"""
-
+        """Initialize an empty playbook with standard sections."""
         return """## STRATEGIES & INSIGHTS
 
 ## FORMULAS & CALCULATIONS
@@ -149,15 +134,6 @@ class ACE:
             'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90)
         }
     
-    def _build_environment_feedback(self, data_processor, is_correct: bool) -> str:
-        """Build environment feedback string, using task-specific feedback when available."""
-        status = "matches ground truth" if is_correct else "does not match ground truth"
-        default_feedback = f"Predicted answer {status}"
-        extra_feedback = getattr(data_processor, "_last_feedback", "")
-        if extra_feedback:
-            return f"{default_feedback}. {extra_feedback}"
-        return default_feedback
-
     def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
         """
         Setup logging paths and directories.
@@ -536,7 +512,7 @@ class ACE:
                     reasoning_trace=gen_response,
                     predicted_answer=final_answer,
                     ground_truth=target if not no_ground_truth else None,
-                    environment_feedback=self._build_environment_feedback(data_processor, is_correct=False),
+                    environment_feedback="Predicted answer does not match ground truth",
                     bullets_used=playbook_bullets,
                     use_ground_truth=not no_ground_truth,
                     use_json_mode=use_json_mode,
@@ -579,7 +555,7 @@ class ACE:
                 reasoning_trace=gen_response,
                 predicted_answer=final_answer,
                 ground_truth=target if not no_ground_truth else None,
-                environment_feedback=self._build_environment_feedback(data_processor, is_correct=True),
+                environment_feedback="Predicted answer matches ground truth",
                 bullets_used=playbook_bullets,
                 use_ground_truth=not no_ground_truth,
                 use_json_mode=use_json_mode,

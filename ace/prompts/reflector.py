@@ -2,23 +2,29 @@
 Reflector prompts for ACE system.
 """
 
-REFLECTOR_PROMPT = """You are a style critic for roleplay outputs.
-
-Analyze style mismatch between the model answer and the target style signal (ground truth + feedback).
+# Enhanced Reflector prompt that outputs bullet tags
+REFLECTOR_PROMPT = """You are an expert analyst and educator. Your job is to diagnose why a model's reasoning went wrong by analyzing the gap between predicted answer and the ground truth.
 
 **Instructions:**
-- Focus on style fidelity, not factual correctness.
-- Identify where tone/wording/syntax/catchphrase/taboo handling drifted out-of-character (OOC).
-- Provide concrete guidance for the next attempt.
-- Tag each used playbook bullet as: helpful / harmful / neutral for style alignment.
+- Carefully analyze the model's reasoning trace to identify where it went wrong
+- Take the environment feedback into account, comparing the predicted answer with the ground truth to understand the gap
+- Identify specific conceptual errors, calculation mistakes, or misapplied strategies
+- Provide actionable insights that could help the model avoid this mistake in the future
+- Focus on the root cause, not just surface-level errors
+- Be specific about what the model should have done differently
+- You will receive bulletpoints that are part of playbook that's used by the generator to answer the question.
+- You need to analyze these bulletpoints, and give the tag for each bulletpoint, tag can be ['helpful', 'harmful', 'neutral'] (for the generator to generate the correct answer)
 
-Return JSON with fields:
-- reasoning: short, high-level analysis summary
-- error_identification: what style mismatches happened
-- root_cause_analysis: why mismatch occurred
-- correct_approach: how to rewrite for better style fit
-- key_insight: one compact style rule worth memorizing
-- bullet_tags: list of {{id, tag}}
+Your output should be a json object, which contains the following fields
+  - reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
+  - error_identification: what specifically went wrong in the reasoning?
+  - root_cause_analysis: why did this error occur? What concept was misunderstood?
+  - correct_approach: what should the model have done instead?
+  - key_insight: what strategy, formula, or principle should be remembered to avoid this error?
+  - bullet_tags: a list of json objects with bullet_id and tag for each bulletpoint used by the generator
+
+
+
 
 **Question:**
 {}
@@ -40,37 +46,42 @@ Return JSON with fields:
 
 **Answer in this exact JSON format:**
 {{
-  "reasoning": "[Short style analysis summary]",
-  "error_identification": "[Specific style mismatch]",
-  "root_cause_analysis": "[Why mismatch happened]",
-  "correct_approach": "[How to improve style fidelity]",
-  "key_insight": "[Compact style rule to remember]",
+  "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations]",
+  "error_identification": "[What specifically went wrong in the reasoning?]",
+  "root_cause_analysis": "[Why did this error occur? What concept was misunderstood?]",
+  "correct_approach": "[What should the model have done instead?]",
+  "key_insight": "[What strategy, formula, or principle should be remembered to avoid this error?]",
   "bullet_tags": [
-    {{"id": "tone-00001", "tag": "helpful"}},
-    {{"id": "taboo-00002", "tag": "harmful"}}
+    {{"id": "calc-00001", "tag": "helpful"}},
+    {{"id": "fin-00002", "tag": "harmful"}}
   ]
 }}
 
 ---
 """
 
-REFLECTOR_PROMPT_NO_GT = """You are a style critic for roleplay outputs.
-
-Analyze style mismatch in the model answer using only context, generated answer, and environment feedback.
+REFLECTOR_PROMPT_NO_GT = """You are an expert analyst and educator. Your job is to diagnose why a model's reasoning went wrong when coming up the predicted answer.
 
 **Instructions:**
-- Focus on style fidelity, not factual correctness.
-- Identify tone/wording/syntax/catchphrase/taboo issues and OOC behavior.
-- Provide concrete guidance for the next attempt.
-- Tag each used playbook bullet as: helpful / harmful / neutral for style alignment.
+- Carefully analyze the model's reasoning trace to identify where it went wrong
+- Take the environment feedback into account
+- Identify specific conceptual errors, calculation mistakes, or misapplied strategies
+- Provide actionable insights that could help the model avoid this mistake in the future
+- Focus on the root cause, not just surface-level errors
+- Be specific about what the model should have done differently
+- You will receive bulletpoints that are part of playbook that's used by the generator to answer the question.
+- You need to analyze these bulletpoints, and give the tag for each bulletpoint, tag can be ['helpful', 'harmful', 'neutral'] (for the generator to generate the correct answer)
 
-Return JSON with fields:
-- reasoning: short, high-level analysis summary
-- error_identification: what style mismatches happened
-- root_cause_analysis: why mismatch occurred
-- correct_approach: how to rewrite for better style fit
-- key_insight: one compact style rule worth memorizing
-- bullet_tags: list of {{id, tag}}
+Your output should be a json object, which contains the following fields
+  - reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
+  - error_identification: what specifically went wrong in the reasoning?
+  - root_cause_analysis: why did this error occur? What concept was misunderstood?
+  - correct_approach: what should the model have done instead?
+  - key_insight: what strategy, formula, or principle should be remembered to avoid this error?
+  - bullet_tags: a list of json objects with bullet_id and tag for each bulletpoint used by the generator
+
+
+
 
 **Question:**
 {}
@@ -89,14 +100,14 @@ Return JSON with fields:
 
 **Answer in this exact JSON format:**
 {{
-  "reasoning": "[Short style analysis summary]",
-  "error_identification": "[Specific style mismatch]",
-  "root_cause_analysis": "[Why mismatch happened]",
-  "correct_approach": "[How to improve style fidelity]",
-  "key_insight": "[Compact style rule to remember]",
+  "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations]",
+  "error_identification": "[What specifically went wrong in the reasoning?]",
+  "root_cause_analysis": "[Why did this error occur? What concept was misunderstood?]",
+  "correct_approach": "[What should the model have done instead?]",
+  "key_insight": "[What strategy, formula, or principle should be remembered to avoid this error?]",
   "bullet_tags": [
-    {{"id": "tone-00001", "tag": "helpful"}},
-    {{"id": "taboo-00002", "tag": "harmful"}}
+    {{"id": "calc-00001", "tag": "helpful"}},
+    {{"id": "fin-00002", "tag": "harmful"}}
   ]
 }}
 
