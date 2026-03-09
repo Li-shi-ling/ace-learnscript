@@ -80,6 +80,7 @@ def main():
         curator_model=args.curator_model,
         max_tokens=args.max_tokens,
         initial_playbook=load_initial_playbook(args.initial_playbook_path),
+        playbook_template="style",
     )
 
     run_config = {

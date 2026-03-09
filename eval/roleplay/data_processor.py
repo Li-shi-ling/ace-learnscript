@@ -1,6 +1,7 @@
 import os
 import json
 from typing import List, Dict, Any, Tuple
+from difflib import SequenceMatcher
 
 import openai
 
@@ -58,9 +59,7 @@ class DataProcessor:
         self._last_feedback = ""
 
         api_key = os.getenv("OPENAI_API_KEY", "")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is required for roleplay style critic")
-        self.critic_client = openai.OpenAI(api_key=api_key)
+        self.critic_client = openai.OpenAI(api_key=api_key) if api_key else None
 
     def process_task_data(self, raw_data: List[Dict]) -> List[Dict]:
         processed_data = []
@@ -76,6 +75,12 @@ class DataProcessor:
             })
         return processed_data
 
+    def _fallback_style_score(self, predicted: str, ground_truth: str) -> Tuple[int, str]:
+        """Fallback scorer used when API key or critic call is unavailable."""
+        ratio = SequenceMatcher(None, predicted.strip().lower(), ground_truth.strip().lower()).ratio()
+        score = max(1, min(10, int(round(ratio * 10))))
+        return score, f"Fallback lexical similarity score (ratio={ratio:.2f})"
+
     def _score_style(self, predicted: str, ground_truth: str, context: str = "", question: str = "") -> Tuple[int, str]:
         prompt = STYLE_CRITIC_PROMPT.format(
             context=context,
@@ -84,20 +89,27 @@ class DataProcessor:
             ground_truth=ground_truth
         )
 
-        response = self.critic_client.chat.completions.create(
-            model=self.critic_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
+        if self.critic_client is None:
+            return self._fallback_style_score(predicted, ground_truth)
 
-        content = response.choices[0].message.content or "{}"
-        parsed = json.loads(content)
+        try:
+            response = self.critic_client.chat.completions.create(
+                model=self.critic_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
 
-        score = int(parsed.get("score", 1))
-        score = max(1, min(10, score))
-        rationale = str(parsed.get("rationale", "No rationale provided"))
-        return score, rationale
+            content = response.choices[0].message.content or "{}"
+            parsed = json.loads(content)
+
+            score = int(parsed.get("score", 1))
+            score = max(1, min(10, score))
+            rationale = str(parsed.get("rationale", "No rationale provided"))
+            return score, rationale
+        except Exception as exc:
+            score, rationale = self._fallback_style_score(predicted, ground_truth)
+            return score, f"{rationale}; critic_call_error={type(exc).__name__}"
 
     def answer_is_correct(self, predicted: str, ground_truth: str) -> bool:
         score, rationale = self._score_style(predicted, ground_truth)
