@@ -43,14 +43,13 @@ def initialize_clients(api_provider):
 
 def get_section_slug(section_name):
     """Convert section name to slug format (3-5 chars)"""
-    # Common section mappings - updated to match original sections
+    # Common section mappings for style optimization playbook
     slug_map = {
-        "financial_strategies_and_insights": "fin",
-        "formulas_and_calculations": "calc",
-        "code_snippets_and_templates": "code",
-        "common_mistakes_to_avoid": "err",
-        "problem_solving_heuristics": "prob",
-        "context_clues_and_indicators": "ctx",
+        "tone_and_manner": "tone",
+        "vocabulary_preferences": "vocab",
+        "syntax_and_structure": "syn",
+        "catchphrases": "catch",
+        "stylistic_taboos": "taboo",
         "others": "misc",
         "meta_strategies": "meta"
     }

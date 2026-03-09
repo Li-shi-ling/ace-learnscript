@@ -1,0 +1,7 @@
+{
+  "roleplay": {
+    "train_data": "./eval/roleplay/data/roleplay_train.jsonl",
+    "val_data": "./eval/roleplay/data/roleplay_val.jsonl",
+    "test_data": "./eval/roleplay/data/roleplay_test.jsonl"
+  }
+}

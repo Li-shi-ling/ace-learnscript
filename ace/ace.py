@@ -93,18 +93,16 @@ class ACE:
         self.next_global_id = 1
     
     def _initialize_empty_playbook(self) -> str:
-        """Initialize an empty playbook with standard sections."""
-        return """## STRATEGIES & INSIGHTS
+        """Initialize an empty playbook with style-optimization sections."""
+        return """## TONE & MANNER
 
-## FORMULAS & CALCULATIONS
+## VOCABULARY PREFERENCES
 
-## CODE SNIPPETS & TEMPLATES
+## SYNTAX & STRUCTURE
 
-## COMMON MISTAKES TO AVOID
+## CATCHPHRASES
 
-## PROBLEM-SOLVING HEURISTICS
-
-## CONTEXT CLUES & INDICATORS
+## STYLISTIC TABOOS
 
 ## OTHERS"""
     
