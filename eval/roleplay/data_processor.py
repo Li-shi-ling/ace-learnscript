@@ -117,7 +117,7 @@ class DataProcessor:
             if len(context) < min_context_chars:
                 continue
 
-            speaker_name = focus_role.capitalize()
+            speaker_name = focus_role
             question = (
                 f"请你继续下面对话，并严格扮演{speaker_name}，"
                 f"保持其语气、措辞和人物风格。只输出{speaker_name}下一句台词。"
@@ -154,6 +154,16 @@ class DataProcessor:
         val_ratio: float = 0.1,
         seed: int = 42,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        if not (0.0 <= train_ratio <= 1.0):
+            raise ValueError(f"train_ratio must be between 0 and 1 (inclusive), got {train_ratio}")
+        if not (0.0 <= val_ratio <= 1.0):
+            raise ValueError(f"val_ratio must be between 0 and 1 (inclusive), got {val_ratio}")
+        if train_ratio + val_ratio > 1.0:
+            raise ValueError(
+                f"train_ratio + val_ratio must be <= 1, got {train_ratio + val_ratio} "
+                f"(train_ratio={train_ratio}, val_ratio={val_ratio})"
+            )
+
         shuffled = list(samples)
         random.Random(seed).shuffle(shuffled)
 
@@ -162,9 +172,6 @@ class DataProcessor:
         return shuffled[:train_end], shuffled[train_end:val_end], shuffled[val_end:]
 
     def process_task_data(self, raw_data: List[Dict]) -> List[Dict]:
-        if raw_data and "translation" in raw_data[0] and "reol" in raw_data[0]:
-            return self.create_roleplay_samples_from_dialog_csv(raw_data)
-
         processed_data = []
         for item in raw_data:
             processed_data.append({

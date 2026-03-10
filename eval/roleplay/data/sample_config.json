@@ -8,6 +8,7 @@
     "source_data": "./Act_02.csv",
     "train_ratio": 0.8,
     "val_ratio": 0.1,
-    "split_seed": 42
+    "split_seed": 42,
+    "focus_role": "hiro"
   }
 }
