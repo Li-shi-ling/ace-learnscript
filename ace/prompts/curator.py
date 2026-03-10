@@ -2,25 +2,22 @@
 Curator prompts for ACE system.
 """
 
-# Curator prompt for intelligent playbook management
-CURATOR_PROMPT = """You are a master curator of knowledge. Your job is to identify what new insights should be added to an existing playbook based on a reflection from a previous attempt.
+CURATOR_PROMPT = """You are a style playbook curator.
+
+Your task is to add only NEW style rules that improve role consistency across future conversations.
 
 **Context:**
-- The playbook you created will be used to help answering similar questions. 
-- The reflection is generated using ground truth answers that will NOT be available when the playbook is being used. So you need to come up with content that can aid the playbook user to create predictions that likely align with ground truth. 
+- Ground truth feedback is available in this training step but may not be available at inference.
+- Add compact, reusable style rules rather than one-off phrasing.
 
 **CRITICAL: You MUST respond with valid JSON only. Do not use markdown formatting or code blocks.**
 
 **Instructions:**
-- Review the existing playbook and the reflection from the previous attempt
-- Identify ONLY the NEW insights, strategies, or mistakes that are MISSING from the current playbook
-- Avoid redundancy - if similar advice already exists, only add new content that is a perfect complement to the existing playbook
-- Do NOT regenerate the entire playbook - only provide the additions needed
-- Focus on quality over quantity - a focused, well-organized playbook is better than an exhaustive one
-- Format your response as a PURE JSON object with specific sections
-- For any operation if no new content to add, return an empty list for the operations field
-- Be concise and specific - each addition should be actionable
-
+- Compare current playbook with recent reflection.
+- Add only missing style rules.
+- Avoid duplicates and near-duplicates.
+- Keep each rule actionable and concise.
+- If nothing new is needed, return an empty operations list.
 
 **Training Context:**
 - Total token budget: {token_budget} tokens
@@ -40,25 +37,25 @@ CURATOR_PROMPT = """You are a master curator of knowledge. Your job is to identi
 
 **Your Task:**
 Output ONLY a valid JSON object with these exact fields:
-- reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
-- operations: a list of operations to be performed on the playbook
-  - type: the type of operation to be performed
-  - section: the section to add the bullet to
-  - content: the new content of the bullet
+- reasoning: short, high-level rationale
+- operations: list of operations
+  - type: operation type
+  - section: target section
+  - content: new bullet content
 
 **Available Operations:**
-1. ADD: Create new bullet points with fresh IDs
-    - section: the section to add the new bullet to
-    - content: the new content of the bullet. Note: no need to include the bullet_id in the content like '[ctx-00263] helpful=1 harmful=0 ::', the bullet_id will be added by the system.
+1. ADD
+    - section: one of tone_and_manner, vocabulary_preferences, syntax_and_structure, catchphrases, stylistic_taboos, others
+    - content: new style bullet text (do not include bullet_id)
 
 **RESPONSE FORMAT - Output ONLY this JSON structure (no markdown, no code blocks):**
 {{
-  "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations here]",
+  "reasoning": "[Short rationale for selected additions]",
   "operations": [
     {{
-      "type": "ADD", 
-      "section": "formulas_and_calculations",
-      "content": "[New calculation method...]"
+      "type": "ADD",
+      "section": "tone_and_manner",
+      "content": "[Specific style rule...]"
     }}
   ]
 }}
@@ -66,24 +63,22 @@ Output ONLY a valid JSON object with these exact fields:
 ---
 """
 
-CURATOR_PROMPT_NO_GT = """You are a master curator of knowledge. Your job is to identify what new insights should be added to an existing playbook based on a reflection from a previous attempt.
+CURATOR_PROMPT_NO_GT = """You are a style playbook curator.
+
+Your task is to add only NEW style rules that improve role consistency across future conversations.
 
 **Context:**
-- The playbook you created will be used to help answering similar questions. 
-- The reflection is generated using environment feedback that will NOT be available when the playbook is being used.
+- Reflection here is built from environment feedback only.
+- Add compact, reusable style rules rather than one-off phrasing.
 
 **CRITICAL: You MUST respond with valid JSON only. Do not use markdown formatting or code blocks.**
 
 **Instructions:**
-- Review the existing playbook and the reflection from the previous attempt
-- Identify ONLY the NEW insights, strategies, or mistakes that are MISSING from the current playbook
-- Avoid redundancy - if similar advice already exists, only add new content that is a perfect complement to the existing playbook
-- Do NOT regenerate the entire playbook - only provide the additions needed
-- Focus on quality over quantity - a focused, well-organized playbook is better than an exhaustive one
-- Format your response as a PURE JSON object with specific sections
-- For any operation if no new content to add, return an empty list for the operations field
-- Be concise and specific - each addition should be actionable
-
+- Compare current playbook with recent reflection.
+- Add only missing style rules.
+- Avoid duplicates and near-duplicates.
+- Keep each rule actionable and concise.
+- If nothing new is needed, return an empty operations list.
 
 **Training Context:**
 - Total token budget: {token_budget} tokens
@@ -103,25 +98,25 @@ CURATOR_PROMPT_NO_GT = """You are a master curator of knowledge. Your job is to 
 
 **Your Task:**
 Output ONLY a valid JSON object with these exact fields:
-- reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
-- operations: a list of operations to be performed on the playbook
-  - type: the type of operation to be performed
-  - section: the section to add the bullet to
-  - content: the new content of the bullet
+- reasoning: short, high-level rationale
+- operations: list of operations
+  - type: operation type
+  - section: target section
+  - content: new bullet content
 
 **Available Operations:**
-1. ADD: Create new bullet points with fresh IDs
-    - section: the section to add the new bullet to
-    - content: the new content of the bullet. Note: no need to include the bullet_id in the content like '[ctx-00263] helpful=1 harmful=0 ::', the bullet_id will be added by the system.
+1. ADD
+    - section: one of tone_and_manner, vocabulary_preferences, syntax_and_structure, catchphrases, stylistic_taboos, others
+    - content: new style bullet text (do not include bullet_id)
 
 **RESPONSE FORMAT - Output ONLY this JSON structure (no markdown, no code blocks):**
 {{
-  "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations here]",
+  "reasoning": "[Short rationale for selected additions]",
   "operations": [
     {{
-      "type": "ADD", 
-      "section": "formulas_and_calculations",
-      "content": "[New calculation method...]"
+      "type": "ADD",
+      "section": "tone_and_manner",
+      "content": "[Specific style rule...]"
     }}
   ]
 }}
