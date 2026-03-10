@@ -5,7 +5,10 @@ import random
 from typing import List, Dict, Any, Tuple
 from difflib import SequenceMatcher
 
-import openai
+try:
+    import openai
+except ImportError:
+    openai = None
 
 
 STYLE_CRITIC_PROMPT = """You are a strict roleplay style critic.
@@ -67,7 +70,7 @@ class DataProcessor:
         self._score_cache: Dict[Tuple[str, str], Tuple[int, str]] = {}
 
         api_key = os.getenv("OPENAI_API_KEY", "")
-        self.critic_client = openai.OpenAI(api_key=api_key) if api_key else None
+        self.critic_client = openai.OpenAI(api_key=api_key) if (api_key and openai is not None) else None
 
     @staticmethod
     def create_roleplay_samples_from_dialog_csv(
