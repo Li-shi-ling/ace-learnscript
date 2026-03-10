@@ -42,11 +42,26 @@ def preprocess_data(config, mode, data_processor):
         train_samples = None
         val_samples = None
         test_samples = data_processor.process_task_data(load_data(config["test_data"]))
-    else:
+        return train_samples, val_samples, test_samples
+
+    # Offline mode supports either explicit train/val/test paths or single CSV auto-split.
+    if "train_data" in config and "val_data" in config:
         train_samples = data_processor.process_task_data(load_data(config["train_data"]))
         val_samples = data_processor.process_task_data(load_data(config["val_data"]))
         test_samples = data_processor.process_task_data(load_data(config["test_data"])) if "test_data" in config else []
-    return train_samples, val_samples, test_samples
+        return train_samples, val_samples, test_samples
+
+    if "source_data" in config:
+        all_samples = data_processor.process_task_data(load_data(config["source_data"]))
+        train_samples, val_samples, test_samples = data_processor.split_samples(
+            all_samples,
+            train_ratio=config.get("train_ratio", 0.8),
+            val_ratio=config.get("val_ratio", 0.1),
+            seed=config.get("split_seed", 42),
+        )
+        return train_samples, val_samples, test_samples
+
+    raise ValueError("Roleplay config must provide either train/val data paths or source_data for auto split.")
 
 
 def load_initial_playbook(path):

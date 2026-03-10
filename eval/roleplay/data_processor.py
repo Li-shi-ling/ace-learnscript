@@ -1,5 +1,7 @@
 import os
 import json
+import csv
+import random
 from typing import List, Dict, Any, Tuple
 from difflib import SequenceMatcher
 
@@ -39,11 +41,16 @@ def load_data(data_path: str) -> List[Dict[str, Any]]:
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
     data = []
-    with open(data_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                data.append(json.loads(line))
+    if data_path.lower().endswith('.csv'):
+        with open(data_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            data = [row for row in reader]
+    else:
+        with open(data_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    data.append(json.loads(line))
 
     print(f"Loaded {len(data)} samples from {data_path}")
     return data
@@ -62,7 +69,99 @@ class DataProcessor:
         api_key = os.getenv("OPENAI_API_KEY", "")
         self.critic_client = openai.OpenAI(api_key=api_key) if api_key else None
 
+    @staticmethod
+    def create_roleplay_samples_from_dialog_csv(
+        rows: List[Dict[str, Any]],
+        focus_role: str = "hiro",
+        context_turn_window: int = 6,
+        min_context_chars: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """Convert dialogue CSV rows into roleplay-style training samples.
+
+        Expected CSV columns include:
+        - translation: utterance text
+        - reol: speaker/role name
+        - optional metadata such as Act/Chapter/type/code
+        """
+        dialogue_rows: List[Dict[str, str]] = []
+        for row in rows:
+            text = (row.get("translation") or "").strip()
+            role = (row.get("reol") or "").strip()
+            if not text or not role:
+                continue
+            dialogue_rows.append({
+                "role": role,
+                "text": text,
+                "act": (row.get("Act") or "").strip(),
+                "chapter": (row.get("Chapter") or "").strip(),
+                "type": (row.get("type") or "").strip(),
+                "code": (row.get("code") or "").strip(),
+            })
+
+        focus_role_lower = focus_role.strip().lower()
+        processed: List[Dict[str, Any]] = []
+
+        for idx, row in enumerate(dialogue_rows):
+            if row["role"].lower() != focus_role_lower:
+                continue
+
+            context_start = max(0, idx - context_turn_window)
+            context_turns = dialogue_rows[context_start:idx]
+            if not context_turns:
+                continue
+
+            context = "\n".join([f"{turn['role']}: {turn['text']}" for turn in context_turns]).strip()
+            if len(context) < min_context_chars:
+                continue
+
+            speaker_name = focus_role.capitalize()
+            question = (
+                f"请你继续下面对话，并严格扮演{speaker_name}，"
+                f"保持其语气、措辞和人物风格。只输出{speaker_name}下一句台词。"
+            )
+
+            style_refs = [
+                turn["text"] for turn in dialogue_rows[max(0, idx - 80): idx]
+                if turn["role"].lower() == focus_role_lower
+            ]
+            reference_style = "\n".join(style_refs[-8:])
+
+            processed.append({
+                "context": context,
+                "question": question,
+                "target": row["text"],
+                "reference_style": reference_style,
+                "others": {
+                    "task": "roleplay",
+                    "source": "dialog_csv",
+                    "focus_role": focus_role,
+                    "act": row["act"],
+                    "chapter": row["chapter"],
+                    "type": row["type"],
+                    "code": row["code"],
+                },
+            })
+
+        return processed
+
+    @staticmethod
+    def split_samples(
+        samples: List[Dict[str, Any]],
+        train_ratio: float = 0.8,
+        val_ratio: float = 0.1,
+        seed: int = 42,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        shuffled = list(samples)
+        random.Random(seed).shuffle(shuffled)
+
+        train_end = int(len(shuffled) * train_ratio)
+        val_end = train_end + int(len(shuffled) * val_ratio)
+        return shuffled[:train_end], shuffled[train_end:val_end], shuffled[val_end:]
+
     def process_task_data(self, raw_data: List[Dict]) -> List[Dict]:
+        if raw_data and "translation" in raw_data[0] and "reol" in raw_data[0]:
+            return self.create_roleplay_samples_from_dialog_csv(raw_data)
+
         processed_data = []
         for item in raw_data:
             processed_data.append({

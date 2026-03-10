@@ -3,5 +3,11 @@
     "train_data": "./eval/roleplay/data/roleplay_train.jsonl",
     "val_data": "./eval/roleplay/data/roleplay_val.jsonl",
     "test_data": "./eval/roleplay/data/roleplay_test.jsonl"
+  },
+  "roleplay_hiro_act02": {
+    "source_data": "./Act_02.csv",
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "split_seed": 42
   }
 }
