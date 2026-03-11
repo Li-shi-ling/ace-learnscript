@@ -9,6 +9,7 @@
     "train_ratio": 0.8,
     "val_ratio": 0.1,
     "split_seed": 42,
-    "focus_role": "hiro"
+    "focus_role": "hiro",
+    "role_aliases_config": "./eval/roleplay/data/role_aliases.json"
   }
 }
