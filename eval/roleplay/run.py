@@ -42,11 +42,46 @@ def preprocess_data(config, mode, data_processor):
         train_samples = None
         val_samples = None
         test_samples = data_processor.process_task_data(load_data(config["test_data"]))
-    else:
+        return train_samples, val_samples, test_samples
+
+    has_explicit_split = ("train_data" in config) or ("val_data" in config)
+    has_source_data = "source_data" in config
+
+    if has_explicit_split and has_source_data:
+        raise ValueError("Roleplay config cannot define both train/val paths and source_data. Please choose one mode.")
+
+    # Offline mode supports either explicit train/val/test paths or single CSV auto-split.
+    if has_explicit_split:
+        if "train_data" not in config or "val_data" not in config:
+            raise ValueError("Both train_data and val_data must be provided together in offline mode.")
+
         train_samples = data_processor.process_task_data(load_data(config["train_data"]))
         val_samples = data_processor.process_task_data(load_data(config["val_data"]))
         test_samples = data_processor.process_task_data(load_data(config["test_data"])) if "test_data" in config else []
-    return train_samples, val_samples, test_samples
+        return train_samples, val_samples, test_samples
+
+    if has_source_data:
+        source_rows = load_data(config["source_data"])
+        focus_role = config.get("focus_role", "hiro")
+        context_turn_window = config.get("context_turn_window", 6)
+        min_context_chars = config.get("min_context_chars", 1)
+
+        all_samples = data_processor.create_roleplay_samples_from_dialog_csv(
+            source_rows,
+            focus_role=focus_role,
+            context_turn_window=context_turn_window,
+            min_context_chars=min_context_chars,
+        )
+
+        train_samples, val_samples, test_samples = data_processor.split_samples(
+            all_samples,
+            train_ratio=config.get("train_ratio", 0.8),
+            val_ratio=config.get("val_ratio", 0.1),
+            seed=config.get("split_seed", 42),
+        )
+        return train_samples, val_samples, test_samples
+
+    raise ValueError("Roleplay config must provide either train/val data paths or source_data for auto split.")
 
 
 def load_initial_playbook(path):
