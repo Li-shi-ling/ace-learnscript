@@ -706,7 +706,7 @@ class ACE:
             post_train_answer = pre_train_answer
             post_train_is_correct = is_correct
         tracking_dict["post_train_result"] = {
-            "final_answer": final_answer,
+            "final_answer": post_train_answer,
             "is_correct": post_train_is_correct,
             "playbook_num_tokens": count_tokens(self.playbook),
             "playbook_length": len(self.playbook)
@@ -726,63 +726,66 @@ class ACE:
         prompt_history_dir: str,
         log_dir: str
     ) -> Dict[str, Any]:
-        """
-        Run offline training
-        
-        Args:
-            train_samples: List of training samples
-            val_samples: List of validation samples
-            data_processor: Data processor instance for the task
-            config: Configuration dictionary
-            save_path: Path to save results
-            usage_log_path: Path for bullet usage logging
-            playbook_dir: Directory for intermediate playbooks
-            log_dir: Directory for detailed logs
-            
-        Returns:
-            Dictionary with training results
-        """
-        # Extract configuration using helper
+        """Run offline training with checkpoint/resume support."""
         config_params = self._extract_config_params(config)
-        task_name = config_params['task_name']
         num_epochs = config_params['num_epochs']
         eval_steps = config_params['eval_steps']
         save_steps = config_params['save_steps']
         test_workers = config_params['test_workers']
         use_json_mode = config_params['use_json_mode']
         curator_frequency = config_params['curator_frequency']
-        
-        # Initialize tracking
+
+        max_train_samples = int(config_params.get('max_train_samples', 0) or 0)
+        max_val_samples = int(config_params.get('max_val_samples', 0) or 0)
+        if max_train_samples > 0:
+            train_samples = train_samples[:max_train_samples]
+        if max_val_samples > 0:
+            val_samples = val_samples[:max_val_samples]
+
         results = []
         pre_train_post_train_results = []
         error_logs = []
         best_accuracy = 0.0
         self.best_playbook = self.playbook
 
-        print(f"Total epochs: {num_epochs}")
-        print(f"Train samples per epoch: {len(train_samples)}")
-        print(f"Val samples: {len(val_samples)}")
+        start_epoch = 1
+        start_step = 1
+        if config_params.get('resume'):
+            checkpoint = self._load_checkpoint(save_path)
+            if checkpoint and checkpoint.get('mode') == 'offline':
+                print(f"[续训] 检测到离线训练 checkpoint: {self._checkpoint_path(save_path)}")
+                start_epoch = int(checkpoint.get('epoch', 1) or 1)
+                start_step = int(checkpoint.get('step', 0) or 0) + 1
+                best_accuracy = float(checkpoint.get('best_accuracy', 0.0) or 0.0)
+                results = checkpoint.get('results', [])
+                error_logs = checkpoint.get('error_logs', [])
+                pre_train_post_train_results = checkpoint.get('pre_train_post_train_results', [])
+                self.playbook = checkpoint.get('playbook', self.playbook)
+                self.best_playbook = checkpoint.get('best_playbook', self.playbook)
+                self.next_global_id = checkpoint.get('next_global_id', self.next_global_id)
+
+        print(f"总轮数: {num_epochs}")
+        print(f"每轮训练样本数: {len(train_samples)}")
+        print(f"验证样本数: {len(val_samples)}")
         print(f"Curator 频率: 每 {curator_frequency} 步")
-        print(f"Evaluation frequency: every {eval_steps} steps\n")
-        
-        # Training loop
+        print(f"评估频率: 每 {eval_steps} 步")
+
         for epoch in range(start_epoch, num_epochs + 1):
-            print(f"\n{'='*60}")
+            print("\n" + "=" * 60)
             print(f"第 {epoch}/{num_epochs} 轮")
-            print(f"{'='*60}")
-            
+            print("=" * 60)
+
             epoch_answers_pre_train = []
             epoch_targets_pre_train = []
             epoch_answers_post_train = []
             epoch_targets_post_train = []
-            
-            for step, task_dict in enumerate(train_samples):
-                step += 1
-                print(f"\n--- Step {step}/{len(train_samples)} ---")
-                
+
+            for step, task_dict in enumerate(train_samples, start=1):
+                if epoch == start_epoch and step < start_step:
+                    continue
+                print(f"\n--- 步骤 {step}/{len(train_samples)} ---")
+
                 target = task_dict.get("target", "")
-                
-                # Use helper method for training single sample
                 pre_train_answer, post_train_answer, tracking_dict = self._train_single_sample(
                     task_dict=task_dict,
                     data_processor=data_processor,
@@ -793,21 +796,19 @@ class ACE:
                     log_dir=log_dir,
                     config_params=config_params,
                     total_samples=len(train_samples),
-                    prompt_history_dir=prompt_history_dir
+                    prompt_history_dir=prompt_history_dir,
                 )
-                
-                # Collect answers for accuracy calculation
+
                 epoch_answers_pre_train.append(pre_train_answer)
                 epoch_targets_pre_train.append(target)
                 epoch_answers_post_train.append(post_train_answer)
                 epoch_targets_post_train.append(target)
-                
-                # Track pre-train and post-train results
+
                 pre_train_post_train_result = {
                     "epoch": epoch,
                     "step": step,
                     "target": target,
-                    **tracking_dict
+                    **tracking_dict,
                 }
                 pre_train_post_train_results.append(pre_train_post_train_result)
 
@@ -832,116 +833,86 @@ class ACE:
                     "error_logs": error_logs,
                     "pre_train_post_train_results": pre_train_post_train_results,
                 })
-                
-                # Save intermediate playbook
+
                 if step % save_steps == 0:
-                    intermediate_path = os.path.join(
-                        playbook_dir, f"epoch_{epoch}_step_{step}_playbook.txt"
-                    )
+                    intermediate_path = os.path.join(playbook_dir, f"epoch_{epoch}_step_{step}_playbook.txt")
                     with open(intermediate_path, "w") as f:
                         f.write(self.playbook)
-                
-                # Periodic evaluation
+
                 if step % eval_steps == 0:
-                    print(f"\n{'='*40}")
+                    print("\n" + "=" * 40)
                     print(f"评估：第 {epoch} 轮，第 {step} 步")
-                    print(f"{'='*40}")
-                    
-                    # Compute training accuracies
-                    pre_train_accuracy = data_processor.evaluate_accuracy(
-                        epoch_answers_pre_train, epoch_targets_pre_train
-                    )
-                    post_train_accuracy = data_processor.evaluate_accuracy(
-                        epoch_answers_post_train, epoch_targets_post_train
-                    )
-                    
-                    # Validation evaluation
+                    print("=" * 40)
+
+                    pre_train_accuracy = data_processor.evaluate_accuracy(epoch_answers_pre_train, epoch_targets_pre_train)
+                    post_train_accuracy = data_processor.evaluate_accuracy(epoch_answers_post_train, epoch_targets_post_train)
+
                     val_results = {}
+                    val_error_log = {"errors": []}
                     if val_samples:
                         val_results, val_error_log = evaluate_test_set(
-                            data_processor, self.generator, self.playbook, 
-                            val_samples, self.max_tokens, log_dir, 
-                            max_workers=test_workers, use_json_mode=use_json_mode
+                            data_processor,
+                            self.generator,
+                            self.playbook,
+                            val_samples,
+                            self.max_tokens,
+                            log_dir,
+                            max_workers=test_workers,
+                            use_json_mode=use_json_mode,
                         )
-                    
+
                     result = {
                         "epoch": epoch,
                         "step": step,
                         "train_result": {
                             "pre_train_accuracy": pre_train_accuracy,
-                            "post_train_accuracy": post_train_accuracy
+                            "post_train_accuracy": post_train_accuracy,
                         },
                         "val_result": val_results,
                         "playbook_num_tokens": count_tokens(self.playbook),
                         "playbook_length": len(self.playbook),
-                        "playbook_stats": get_playbook_stats(self.playbook)
+                        "playbook_stats": get_playbook_stats(self.playbook),
                     }
                     results.append(result)
                     error_logs.append({
                         "epoch": epoch,
                         "step": step,
                         "val_results": val_results,
-                        "error_log": val_error_log
+                        "error_log": val_error_log,
                     })
 
-                    # Track best playbook
                     if val_results:
                         acc = val_results["accuracy"]
                         if acc > best_accuracy:
                             best_accuracy = acc
                             self.best_playbook = self.playbook
                             print(f"🎉 新最佳准确率: {best_accuracy:.3f}")
-                    
-                    # Save results
-                    results_path = os.path.join(save_path, "train_results.json")
-                    with open(results_path, "w") as f:
-                        json.dump({
-                            "best_accuracy": best_accuracy,
-                            "results": results,
-                        }, f, indent=2)
-                    
-                    error_logs_path = os.path.join(save_path, "val_results.json")
-                    with open(error_logs_path, "w") as f:
+
+                    with open(os.path.join(save_path, "train_results.json"), "w") as f:
+                        json.dump({"best_accuracy": best_accuracy, "results": results}, f, indent=2)
+                    with open(os.path.join(save_path, "val_results.json"), "w") as f:
                         json.dump(error_logs, f, indent=2)
-            
-            # End of epoch - save final playbook
-            epoch_playbook_path = os.path.join(
-                playbook_dir, f"epoch_{epoch}_final_playbook.txt"
-            )
-            with open(epoch_playbook_path, "w") as f:
+
+            with open(os.path.join(playbook_dir, f"epoch_{epoch}_final_playbook.txt"), "w") as f:
                 f.write(self.playbook)
 
-        # Save training results
-        results_path = os.path.join(save_path, "train_results.json")
-        with open(results_path, "w") as f:
-            json.dump({
-                "best_accuracy": best_accuracy,
-                "results": results,
-            }, f, indent=2)
-        
-        pre_train_post_train_results_path = os.path.join(save_path, "pre_train_post_train_results.json")
-        with open(pre_train_post_train_results_path, "w") as f:
+        with open(os.path.join(save_path, "train_results.json"), "w") as f:
+            json.dump({"best_accuracy": best_accuracy, "results": results}, f, indent=2)
+        with open(os.path.join(save_path, "pre_train_post_train_results.json"), "w") as f:
             json.dump(pre_train_post_train_results, f, indent=2)
-        
-        # Save final playbook
-        final_playbook_path = os.path.join(save_path, f"final_playbook.txt")
-        with open(final_playbook_path, "w") as f:
+        with open(os.path.join(save_path, "final_playbook.txt"), "w") as f:
             f.write(self.playbook)
-        
-        # Save best playbook
-        best_playbook_path = os.path.join(save_path, f"best_playbook.txt")
-        with open(best_playbook_path, "w") as f:
+        with open(os.path.join(save_path, "best_playbook.txt"), "w") as f:
             f.write(self.best_playbook)
-        
-        print(f"\n{'='*60}")
-        print(f"离线训练完成")
-        print(f"{'='*60}")
+
+        print("\n" + "=" * 60)
+        print("离线训练完成")
+        print("=" * 60)
         print(f"最佳验证准确率: {best_accuracy:.3f}")
-        print(f"{'='*60}\n")
+        print("=" * 60 + "\n")
 
         return {"best_validation_accuracy": best_accuracy}
 
-    
     def test(
         self,
         test_samples: List[Dict[str, Any]],
