@@ -62,15 +62,26 @@ def load_data(data_path: str) -> List[Dict[str, Any]]:
 class DataProcessor:
     """Roleplay data processor with LLM-based style scoring."""
 
-    def __init__(self, task_name: str, critic_model: str = "gpt-4o", pass_threshold: int = 8):
+    def __init__(
+        self,
+        task_name: str,
+        critic_model: str = "gpt-4o",
+        pass_threshold: int = 8,
+        critic_api_key: Optional[str] = None,
+        critic_api_base: Optional[str] = None,
+    ):
         self.task_name = task_name
         self.critic_model = critic_model
         self.pass_threshold = pass_threshold
         self._last_feedback = ""
         self._score_cache: Dict[Tuple[str, str], Tuple[int, str]] = {}
 
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        self.critic_client = openai.OpenAI(api_key=api_key) if (api_key and openai is not None) else None
+        api_key = (critic_api_key or os.getenv("OPENAI_API_KEY", "")).strip()
+        api_base = (critic_api_base or "").strip()
+        if api_key and openai is not None:
+            self.critic_client = openai.OpenAI(api_key=api_key, base_url=api_base or None)
+        else:
+            self.critic_client = None
 
     @staticmethod
     def load_role_aliases(config_path: Optional[str] = None) -> Dict[str, List[str]]:

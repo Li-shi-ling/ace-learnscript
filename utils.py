@@ -34,10 +34,13 @@ def initialize_clients(api_provider):
             raise ValueError("OpenAI api key not found in environment variables")
     elif api_provider == "openai_compatible":
         # Use any OpenAI-compatible endpoint
-        base_url = os.getenv('OPENAI_COMPATIBLE_BASE_URL', '').strip()
-        api_key = os.getenv('OPENAI_COMPATIBLE_API_KEY', '').strip() or os.getenv('OPENAI_API_KEY', '').strip()
+        base_url = os.getenv('OPENAI_COMPATIBLE_BASE_URL', '').strip() or os.getenv('OPENAI_API_BASE', '').strip()
+        api_key = (
+            os.getenv('OPENAI_COMPATIBLE_API_KEY', '').strip()
+            or os.getenv('OPENAI_API_KEY', '').strip()
+        )
         if not base_url:
-            raise ValueError("OPENAI_COMPATIBLE_BASE_URL not found in environment variables")
+            raise ValueError("OPENAI_COMPATIBLE_BASE_URL (or OPENAI_API_BASE) not found in environment variables")
         if not api_key:
             raise ValueError("OPENAI_COMPATIBLE_API_KEY (or OPENAI_API_KEY) not found in environment variables")
         provider_label = f"openai_compatible ({base_url})"

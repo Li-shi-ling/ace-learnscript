@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -18,8 +19,38 @@ def load_yaml(path: str) -> Dict[str, Any]:
     text = Path(path).read_text(encoding="utf-8")
     if yaml is not None:
         return yaml.safe_load(text) or {}
-    # YAML 1.2 is a superset of JSON. Fallback to JSON parsing when PyYAML is unavailable.
     return json.loads(text)
+
+
+def resolve_config_value(value: Any) -> str:
+    """Resolve raw value or ENV indirection such as ${ENV:OPENAI_API_KEY}."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.startswith("${ENV:") and text.endswith("}"):
+        env_name = text[6:-1].strip()
+        return os.getenv(env_name, "").strip()
+    return text
+
+
+def apply_llm_runtime_env(llm: Dict[str, Any]) -> str:
+    """Apply LLM endpoint/key from config into runtime env for ACE client initialization."""
+    api_provider = llm.get("api_provider", "openai_compatible")
+    api_base = resolve_config_value(llm.get("api_base"))
+    api_key = resolve_config_value(llm.get("api_key"))
+
+    if api_base:
+        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = api_base
+        os.environ["OPENAI_API_BASE"] = api_base
+        if api_provider == "openai":
+            # If custom base is provided, switch to compatible mode automatically.
+            api_provider = "openai_compatible"
+
+    if api_key:
+        os.environ["OPENAI_COMPATIBLE_API_KEY"] = api_key
+        os.environ["OPENAI_API_KEY"] = api_key
+
+    return api_provider
 
 
 def preprocess_roleplay_data(config: Dict[str, Any], data_processor: DataProcessor):
@@ -87,11 +118,14 @@ def main():
 
     task_name = experiment.get("task_name", "roleplay")
     mode = experiment.get("mode", "offline")
+    api_provider = apply_llm_runtime_env(llm)
 
     data_processor = DataProcessor(
         task_name=task_name,
         critic_model=llm.get("critic_model", "gpt-4o"),
         pass_threshold=training.get("style_pass_threshold", 8),
+        critic_api_key=resolve_config_value(llm.get("critic_api_key")) or resolve_config_value(llm.get("api_key")),
+        critic_api_base=resolve_config_value(llm.get("critic_api_base")) or resolve_config_value(llm.get("api_base")),
     )
 
     train_samples, val_samples, test_samples = preprocess_roleplay_data(config, data_processor)
@@ -99,7 +133,7 @@ def main():
     from ace import ACE
 
     ace_system = ACE(
-        api_provider=llm.get("api_provider", "openai"),
+        api_provider=api_provider,
         generator_model=llm.get("generator_model", "gpt-4o-mini"),
         reflector_model=llm.get("reflector_model", "gpt-4o-mini"),
         curator_model=llm.get("curator_model", "gpt-4o-mini"),
