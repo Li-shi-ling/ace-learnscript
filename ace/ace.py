@@ -763,6 +763,8 @@ class ACE:
                 self.playbook = checkpoint.get('playbook', self.playbook)
                 self.best_playbook = checkpoint.get('best_playbook', self.playbook)
                 self.next_global_id = checkpoint.get('next_global_id', self.next_global_id)
+            else:
+                print(f"[续训] 未找到可用 checkpoint，将从头开始。目录: {save_path}")
 
         print(f"总轮数: {num_epochs}")
         print(f"每轮训练样本数: {len(train_samples)}")
