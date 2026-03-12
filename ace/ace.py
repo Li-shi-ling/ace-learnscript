@@ -183,9 +183,11 @@ class ACE:
 
         usage_log_path = os.path.join(save_path, "bullet_usage_log.jsonl")
         playbook_dir = os.path.join(save_path, "intermediate_playbooks")
+        prompt_history_dir = os.path.join(save_path, "prompt_history")
         os.makedirs(playbook_dir, exist_ok=True)
-        
-        return save_path, usage_log_path, playbook_dir, log_dir
+        os.makedirs(prompt_history_dir, exist_ok=True)
+
+        return save_path, usage_log_path, playbook_dir, prompt_history_dir, log_dir
     
     def run(
         self,
@@ -233,8 +235,9 @@ class ACE:
             save_path, log_dir = self._setup_paths(save_dir, task_name, mode)
             usage_log_path = None
             playbook_dir = None
+            prompt_history_dir = None
         else:
-            save_path, usage_log_path, playbook_dir, log_dir = self._setup_paths(save_dir, task_name, mode)
+            save_path, usage_log_path, playbook_dir, prompt_history_dir, log_dir = self._setup_paths(save_dir, task_name, mode)
         
         # Save configuration
         config_path = os.path.join(save_path, "run_config.json")
@@ -298,6 +301,7 @@ class ACE:
                 save_path=save_path,
                 usage_log_path=usage_log_path,
                 playbook_dir=playbook_dir,
+                prompt_history_dir=prompt_history_dir,
                 log_dir=log_dir
             )
             results['training_results'] = training_results
@@ -348,6 +352,7 @@ class ACE:
                 save_path=save_path,
                 usage_log_path=usage_log_path,
                 playbook_dir=playbook_dir,
+                prompt_history_dir=prompt_history_dir,
                 log_dir=log_dir
             )
             results['online_test_results'] = online_results
@@ -453,7 +458,8 @@ class ACE:
         usage_log_path: str,
         log_dir: str,
         config_params: Dict[str, Any],
-        total_samples: int
+        total_samples: int,
+        prompt_history_dir: Optional[str] = None,
     ) -> Tuple[str, str, Dict[str, Any]]:
         """
         Train on a single sample with reflection and curation.
@@ -629,6 +635,15 @@ class ACE:
                     merge=True
                 )
         
+
+        if prompt_history_dir:
+            prompt_snapshot_path = os.path.join(
+                prompt_history_dir,
+                f"epoch_{epoch}_step_{step}_prompt.txt"
+            )
+            with open(prompt_snapshot_path, "w", encoding="utf-8") as f:
+                f.write(self.playbook)
+
         # STEP 4: Post-curator generation
         gen_response, _, _ = self.generator.generate(
             question=question,
@@ -662,6 +677,7 @@ class ACE:
         save_path: str,
         usage_log_path: str,
         playbook_dir: str,
+        prompt_history_dir: str,
         log_dir: str
     ) -> Dict[str, Any]:
         """
@@ -730,7 +746,8 @@ class ACE:
                     usage_log_path=usage_log_path,
                     log_dir=log_dir,
                     config_params=config_params,
-                    total_samples=len(train_samples)
+                    total_samples=len(train_samples),
+                    prompt_history_dir=prompt_history_dir
                 )
                 
                 # Collect answers for accuracy calculation
@@ -906,6 +923,7 @@ class ACE:
         save_path: str,
         usage_log_path: str,
         playbook_dir: str,
+        prompt_history_dir: str,
         log_dir: str
     ) -> Dict[str, Any]:
         """
@@ -1049,7 +1067,8 @@ class ACE:
                     usage_log_path=usage_log_path,
                     log_dir=log_dir,
                     config_params=config_params,
-                    total_samples=len(test_samples)
+                    total_samples=len(test_samples),
+                    prompt_history_dir=prompt_history_dir
                 )
                 
                 # Collect answers for accuracy calculation
