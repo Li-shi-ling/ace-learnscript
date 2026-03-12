@@ -53,6 +53,16 @@ def apply_llm_runtime_env(llm: Dict[str, Any]) -> str:
     return api_provider
 
 
+def describe_split_counts(all_samples_count: int, train_ratio: float, val_ratio: float) -> None:
+    train_n = int(all_samples_count * train_ratio)
+    val_n = int(all_samples_count * val_ratio)
+    test_n = all_samples_count - train_n - val_n
+    print(
+        f"[数据切分说明] 总样本={all_samples_count}，train_ratio={train_ratio}，val_ratio={val_ratio}，"
+        f"因此 train={train_n}, val={val_n}, test={test_n}。"
+    )
+
+
 def preprocess_roleplay_data(config: Dict[str, Any], data_processor: DataProcessor):
     mode = config["experiment"]["mode"]
     dataset = config["data"]
@@ -85,12 +95,25 @@ def preprocess_roleplay_data(config: Dict[str, Any], data_processor: DataProcess
             min_context_chars=dataset.get("min_context_chars", 1),
             role_aliases=aliases,
         )
-        return DataProcessor.split_samples(
+        train_ratio = dataset.get("train_ratio", 0.8)
+        val_ratio = dataset.get("val_ratio", 0.1)
+        describe_split_counts(len(all_samples), train_ratio, val_ratio)
+        train_samples, val_samples, test_samples = DataProcessor.split_samples(
             all_samples,
-            train_ratio=dataset.get("train_ratio", 0.8),
-            val_ratio=dataset.get("val_ratio", 0.1),
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
             seed=dataset.get("split_seed", 42),
         )
+        max_train_samples = int(dataset.get("max_train_samples", 0) or 0)
+        max_val_samples = int(dataset.get("max_val_samples", 0) or 0)
+        max_test_samples = int(dataset.get("max_test_samples", 0) or 0)
+        if max_train_samples > 0:
+            train_samples = train_samples[:max_train_samples]
+        if max_val_samples > 0:
+            val_samples = val_samples[:max_val_samples]
+        if max_test_samples > 0:
+            test_samples = test_samples[:max_test_samples]
+        return train_samples, val_samples, test_samples
 
     raise ValueError("data section must provide either train/val split or source_data")
 
@@ -110,6 +133,7 @@ def main():
     args = parser.parse_args()
 
     config = load_yaml(args.config)
+    print(f"[启动] 已加载配置文件: {args.config}")
 
     experiment = config.get("experiment", {})
     llm = config.get("llm", {})
@@ -119,6 +143,10 @@ def main():
     task_name = experiment.get("task_name", "roleplay")
     mode = experiment.get("mode", "offline")
     api_provider = apply_llm_runtime_env(llm)
+    print(
+        f"[LLM] provider={api_provider}, generator={llm.get('generator_model')}, "
+        f"reflector={llm.get('reflector_model')}, curator={llm.get('curator_model')}"
+    )
 
     data_processor = DataProcessor(
         task_name=task_name,
@@ -129,6 +157,7 @@ def main():
     )
 
     train_samples, val_samples, test_samples = preprocess_roleplay_data(config, data_processor)
+    print(f"[数据] train={0 if train_samples is None else len(train_samples)}, val={0 if val_samples is None else len(val_samples)}, test={0 if test_samples is None else len(test_samples)}")
 
     from ace import ACE
 
@@ -157,12 +186,25 @@ def main():
         "save_dir": output.get("save_dir", "./results"),
         "test_workers": training.get("test_workers", 20),
         "training_objective": experiment.get("training_objective", ""),
+        "resume": training.get("resume", False),
+        "resume_run_path": output.get("resume_run_path"),
+        "run_name": output.get("run_name"),
+        "context_max_chars": training.get("context_max_chars", 1600),
+        "question_max_chars": training.get("question_max_chars", 800),
+        "enable_post_train_generation": training.get("enable_post_train_generation", True),
+        "log_language": training.get("log_language", "zh"),
+        "max_train_samples": config.get("data", {}).get("max_train_samples", 0),
+        "max_val_samples": config.get("data", {}).get("max_val_samples", 0),
+        "max_test_samples": config.get("data", {}).get("max_test_samples", 0),
     }
 
     metadata_path = Path(run_config["save_dir"]) / "last_run_request.json"
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    print("[训练] 开始运行 ACE...（支持中断后续训）")
+    if run_config["resume"]:
+        print(f"[续训] 已开启 resume，resume_run_path={run_config['resume_run_path']}")
     results = ace_system.run(
         mode=mode,
         train_samples=train_samples,
@@ -171,7 +213,7 @@ def main():
         data_processor=data_processor,
         config=run_config,
     )
-    print(f"Final results: {results}")
+    print(f"[完成] 最终结果: {results}")
 
 
 if __name__ == "__main__":

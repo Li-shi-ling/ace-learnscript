@@ -1,39 +1,28 @@
-# ACE-LearnScript 标准使用文档
+# ACE-LearnScript 使用文档（性能优化版）
 
-本项目使用**单 YAML 配置 + 一键启动**。你只需改一个文件：`configs/train_config.yaml`。
-
-可在该文件统一配置：
-- LLM 模型
-- API 地址与 API Key
-- 训练目的
-- 数据来源
-- 训练目标
-- 结果存储位置
+本版本重点解决：
+1. 运行速度慢
+2. token 消耗高
+3. 为什么 CSV 会出现 5133 个训练批次
+4. 日志不清晰
+5. 日志中文化
+6. 中途退出与进度继承
 
 ---
 
-## 1. 安装
+## 1) 一键启动
 
 ```bash
-uv sync
+uv run python run_one_click.py --config configs/train_config.yaml
 ```
 
 ---
 
-## 2. 配置（只改一个 YAML）
+## 2) 统一配置（一个 YAML）
 
-默认配置文件：`configs/train_config.yaml`
+只改 `configs/train_config.yaml`。
 
-关键区块：
-- `experiment`：任务名、模式、训练目的
-- `llm`：provider、`api_base`、`api_key`、模型名
-- `data`：数据来源（`source_data` 或 train/val/test）
-- `training`：训练超参数
-- `output`：输出目录
-
-### 2.1 最重要：API 与 Key
-
-在 `llm` 里配置：
+### LLM 最重要配置
 
 ```yaml
 llm:
@@ -42,77 +31,82 @@ llm:
   api_key: ${ENV:OPENAI_COMPATIBLE_API_KEY}
 ```
 
-支持两种写法：
-- 直接写值（不推荐提交到仓库）
-- `${ENV:变量名}`（推荐）
+支持所有 OpenAI 协议兼容服务（官方/网关/私有部署）。
 
 ---
 
-## 3. 兼容所有 OpenAI 格式 LLM
+## 3) 为什么会有 5133 个训练批次？
 
-默认建议 `api_provider: openai_compatible`。
+以 `Act_02.csv` 为例：
+- 先根据角色筛选并构造样本，得到约 `6417` 条
+- 按 `train_ratio=0.8` 切分训练集
+- `int(6417 * 0.8) = 5133`
 
-只要你的服务兼容 OpenAI Chat Completions 接口（含 `base_url + api_key`），即可直接接入。
-例如：
-- OpenAI 官方
-- 各类私有部署网关
-- 兼容 OpenAI 协议的第三方服务
+所以 5133 不是“batch size”，而是**训练样本条数（每步 1 条样本）**。
+
+程序启动时会输出中文切分说明。
 
 ---
 
-## 4. 一键启动
+## 4) 如何提速并降低 token
 
-```bash
-uv run python run_one_click.py --config configs/train_config.yaml
+配置里已提供以下开关：
+
+```yaml
+data:
+  max_train_samples: 800
+  max_val_samples: 120
+  max_test_samples: 120
+
+training:
+  context_max_chars: 1200
+  question_max_chars: 600
+  enable_post_train_generation: false
 ```
 
-不传 `--config` 时默认用 `configs/train_config.yaml`。
+建议：
+- 先用小样本调参（max_*_samples）
+- 限制上下文长度（context/question_max_chars）
+- 关闭训练后第二次生成（enable_post_train_generation=false）
 
 ---
 
-## 5. Act_02.csv 可扩展加载
+## 5) 明确日志与效果追踪
 
-Roleplay CSV 按语义识别列名，表头语义不变即可处理：
-- 文本列：`translation / text / utterance / content`
-- 角色列：`reol / role / speaker / character / name`
-- 可选列：`Act / Chapter / type / code`
-
----
-
-## 6. 角色名配置
-
-角色映射文件：`eval/roleplay/data/role_aliases.json`
-
-可在该文件维护别名，无需改代码。
+每次训练会生成：
+- `training_progress.jsonl`：逐步效果日志（是否改进、token 等）
+- `checkpoint_state.json`：断点恢复状态
+- `prompt_history/`：每步优化后的提示词快照
+- `intermediate_playbooks/`、`final_playbook.txt`、`best_playbook.txt`
 
 ---
 
-## 7. 每次训练提示词自动存档
+## 6) 中途退出与进度继承（续训）
 
-每个训练 step 的优化后提示词（playbook）都会保存到：
+### 第一次运行
+```yaml
+training:
+  resume: false
 
-```text
-<run_dir>/prompt_history/
+output:
+  run_name: roleplay_fast_demo
+  resume_run_path: null
 ```
 
-同时保留：
-- `intermediate_playbooks/`
-- `final_playbook.txt`
-- `best_playbook.txt`
+### 继续训练
+```yaml
+training:
+  resume: true
+
+output:
+  resume_run_path: ./results/roleplay_fast_demo
+```
+
+系统会读取 `checkpoint_state.json` 自动从中断位置继续。
 
 ---
 
-## 8. 输出目录示例
+## 7) 中文日志
 
-```text
-results/
-└── ace_run_时间戳_任务_模式/
-    ├── run_config.json
-    ├── final_results.json
-    ├── train_results.json
-    ├── val_results.json
-    ├── prompt_history/
-    ├── intermediate_playbooks/
-    ├── final_playbook.txt
-    └── best_playbook.txt
-```
+核心流程日志已切换为中文（启动、切分、训练进度、评估、续训提示、完成状态等）。
+
