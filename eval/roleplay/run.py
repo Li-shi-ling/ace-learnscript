@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument("--initial_playbook_path", type=str, default=None)
     parser.add_argument("--mode", type=str, default="offline", choices=["offline", "online", "eval_only"])
 
-    parser.add_argument("--api_provider", type=str, default="openai", choices=["sambanova", "together", "openai"])
+    parser.add_argument("--api_provider", type=str, default="openai", choices=["sambanova", "together", "openai", "openai_compatible"])
     parser.add_argument("--generator_model", type=str, default="gpt-4o-mini")
     parser.add_argument("--reflector_model", type=str, default="gpt-4o-mini")
     parser.add_argument("--curator_model", type=str, default="gpt-4o-mini")
@@ -65,12 +65,14 @@ def preprocess_data(config, mode, data_processor):
         focus_role = config.get("focus_role", "hiro")
         context_turn_window = config.get("context_turn_window", 6)
         min_context_chars = config.get("min_context_chars", 1)
+        role_aliases = data_processor.load_role_aliases(config.get("role_aliases_config"))
 
         all_samples = data_processor.create_roleplay_samples_from_dialog_csv(
             source_rows,
             focus_role=focus_role,
             context_turn_window=context_turn_window,
             min_context_chars=min_context_chars,
+            role_aliases=role_aliases,
         )
 
         train_samples, val_samples, test_samples = data_processor.split_samples(

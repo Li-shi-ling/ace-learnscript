@@ -2,7 +2,7 @@ import os
 import json
 import csv
 import random
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from difflib import SequenceMatcher
 
 try:
@@ -62,15 +62,71 @@ def load_data(data_path: str) -> List[Dict[str, Any]]:
 class DataProcessor:
     """Roleplay data processor with LLM-based style scoring."""
 
-    def __init__(self, task_name: str, critic_model: str = "gpt-4o", pass_threshold: int = 8):
+    def __init__(
+        self,
+        task_name: str,
+        critic_model: str = "gpt-4o",
+        pass_threshold: int = 8,
+        critic_api_key: Optional[str] = None,
+        critic_api_base: Optional[str] = None,
+    ):
         self.task_name = task_name
         self.critic_model = critic_model
         self.pass_threshold = pass_threshold
         self._last_feedback = ""
         self._score_cache: Dict[Tuple[str, str], Tuple[int, str]] = {}
 
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        self.critic_client = openai.OpenAI(api_key=api_key) if (api_key and openai is not None) else None
+        api_key = (critic_api_key or os.getenv("OPENAI_API_KEY", "")).strip()
+        api_base = (critic_api_base or "").strip()
+        if api_key and openai is not None:
+            self.critic_client = openai.OpenAI(api_key=api_key, base_url=api_base or None)
+        else:
+            self.critic_client = None
+
+    @staticmethod
+    def load_role_aliases(config_path: Optional[str] = None) -> Dict[str, List[str]]:
+        if not config_path:
+            return {}
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Role aliases file not found: {config_path}")
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            aliases = json.load(f)
+
+        if not isinstance(aliases, dict):
+            raise ValueError("Role aliases config must be a JSON object mapping canonical role -> aliases list")
+
+        normalized: Dict[str, List[str]] = {}
+        for canonical, alias_list in aliases.items():
+            canonical_name = str(canonical).strip()
+            if not canonical_name:
+                continue
+
+            if isinstance(alias_list, list):
+                candidate_aliases = alias_list
+            elif alias_list is None:
+                candidate_aliases = []
+            else:
+                candidate_aliases = [alias_list]
+
+            values = [canonical_name]
+            for alias in candidate_aliases:
+                alias_text = str(alias).strip()
+                if alias_text:
+                    values.append(alias_text)
+
+            deduped = []
+            seen = set()
+            for value in values:
+                lowered = value.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                deduped.append(value)
+
+            normalized[canonical_name] = deduped
+
+        return normalized
 
     @staticmethod
     def create_roleplay_samples_from_dialog_csv(
@@ -78,30 +134,73 @@ class DataProcessor:
         focus_role: str = "hiro",
         context_turn_window: int = 6,
         min_context_chars: int = 1,
+        role_aliases: Optional[Dict[str, List[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """Convert dialogue CSV rows into roleplay-style training samples.
 
-        Expected CSV columns include:
-        - translation: utterance text
-        - reol: speaker/role name
-        - optional metadata such as Act/Chapter/type/code
+        Required CSV headers are checked by semantic aliases (case-insensitive), so
+        as long as the expected header meaning is preserved, ingestion keeps working.
+
+        Required semantic headers:
+        - utterance text: translation/text/utterance/content
+        - role name: reol/role/speaker/character/name
         """
+
+        def normalize_header(text: str) -> str:
+            return str(text or "").strip().lower()
+
+        header_map: Dict[str, str] = {}
+        if rows:
+            for key in rows[0].keys():
+                norm = normalize_header(key)
+                if norm:
+                    header_map[norm] = key
+
+        def resolve_column(candidates: List[str], required: bool = False) -> Optional[str]:
+            for candidate in candidates:
+                if candidate in header_map:
+                    return header_map[candidate]
+            if required:
+                raise ValueError(
+                    f"CSV missing required column. Expected one of {candidates}, available={list(rows[0].keys()) if rows else []}"
+                )
+            return None
+
+        text_col = resolve_column(["translation", "text", "utterance", "content"], required=True)
+        role_col = resolve_column(["reol", "role", "speaker", "character", "name"], required=True)
+        act_col = resolve_column(["act"]) 
+        chapter_col = resolve_column(["chapter"])
+        type_col = resolve_column(["type"])
+        code_col = resolve_column(["code"])
+
+        alias_lookup: Dict[str, str] = {}
+        role_aliases = role_aliases or {}
+        for canonical_name, aliases in role_aliases.items():
+            canonical_clean = str(canonical_name).strip()
+            if not canonical_clean:
+                continue
+            for alias in aliases:
+                alias_lookup[str(alias).strip().lower()] = canonical_clean
+
         dialogue_rows: List[Dict[str, str]] = []
         for row in rows:
-            text = (row.get("translation") or "").strip()
-            role = (row.get("reol") or "").strip()
-            if not text or not role:
+            text = (row.get(text_col) or "").strip()
+            role_raw = (row.get(role_col) or "").strip()
+            if not text or not role_raw:
                 continue
+
+            role = alias_lookup.get(role_raw.lower(), role_raw)
             dialogue_rows.append({
                 "role": role,
                 "text": text,
-                "act": (row.get("Act") or "").strip(),
-                "chapter": (row.get("Chapter") or "").strip(),
-                "type": (row.get("type") or "").strip(),
-                "code": (row.get("code") or "").strip(),
+                "act": (row.get(act_col) or "").strip() if act_col else "",
+                "chapter": (row.get(chapter_col) or "").strip() if chapter_col else "",
+                "type": (row.get(type_col) or "").strip() if type_col else "",
+                "code": (row.get(code_col) or "").strip() if code_col else "",
             })
 
-        focus_role_lower = focus_role.strip().lower()
+        focus_role_normalized = alias_lookup.get(focus_role.strip().lower(), focus_role.strip())
+        focus_role_lower = focus_role_normalized.lower()
         processed: List[Dict[str, Any]] = []
 
         for idx, row in enumerate(dialogue_rows):
@@ -117,7 +216,7 @@ class DataProcessor:
             if len(context) < min_context_chars:
                 continue
 
-            speaker_name = focus_role
+            speaker_name = focus_role_normalized
             question = (
                 f"请你继续下面对话，并严格扮演{speaker_name}，"
                 f"保持其语气、措辞和人物风格。只输出{speaker_name}下一句台词。"
@@ -137,7 +236,7 @@ class DataProcessor:
                 "others": {
                     "task": "roleplay",
                     "source": "dialog_csv",
-                    "focus_role": focus_role,
+                    "focus_role": focus_role_normalized,
                     "act": row["act"],
                     "chapter": row["chapter"],
                     "type": row["type"],

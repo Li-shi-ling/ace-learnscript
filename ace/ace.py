@@ -146,7 +146,17 @@ class ACE:
             'save_dir': config.get('save_dir', './results'),
             'test_workers': config.get('test_workers', 20),
             'use_bulletpoint_analyzer': config.get('use_bulletpoint_analyzer', False),
-            'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90)
+            'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90),
+            'resume': config.get('resume', False),
+            'resume_run_path': config.get('resume_run_path', None),
+            'run_name': config.get('run_name', None),
+            'context_max_chars': config.get('context_max_chars', 1600),
+            'question_max_chars': config.get('question_max_chars', 800),
+            'enable_post_train_generation': config.get('enable_post_train_generation', True),
+            'log_language': config.get('log_language', 'zh'),
+            'max_train_samples': config.get('max_train_samples', 0),
+            'max_val_samples': config.get('max_val_samples', 0),
+            'max_test_samples': config.get('max_test_samples', 0)
         }
     
     def _build_environment_feedback(self, data_processor, is_correct: bool) -> str:
@@ -158,7 +168,7 @@ class ACE:
             return f"{default_feedback}. {extra_feedback}"
         return default_feedback
 
-    def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
+    def _setup_paths(self, save_dir: str, task_name: str, mode: str, config: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
         """
         Setup logging paths and directories.
         
@@ -170,10 +180,18 @@ class ACE:
         Returns:
             Tuple of (usage_log_path, playbook_dir)
         """
-        # Create timestamped run folder
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_folder = f"ace_run_{timestamp}_{task_name}_{mode}"
-        save_path = os.path.join(save_dir, run_folder)
+        # Create run folder (new or resume)
+        config = config or {}
+        resume_run_path = config.get('resume_run_path')
+        run_name = config.get('run_name')
+        if resume_run_path:
+            save_path = resume_run_path
+        elif run_name:
+            save_path = os.path.join(save_dir, run_name)
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_folder = f"ace_run_{timestamp}_{task_name}_{mode}"
+            save_path = os.path.join(save_dir, run_folder)
         os.makedirs(save_path, exist_ok=True)
         log_dir = os.path.join(save_path, "detailed_llm_logs")
         os.makedirs(log_dir, exist_ok=True)
@@ -183,9 +201,30 @@ class ACE:
 
         usage_log_path = os.path.join(save_path, "bullet_usage_log.jsonl")
         playbook_dir = os.path.join(save_path, "intermediate_playbooks")
+        prompt_history_dir = os.path.join(save_path, "prompt_history")
         os.makedirs(playbook_dir, exist_ok=True)
-        
-        return save_path, usage_log_path, playbook_dir, log_dir
+        os.makedirs(prompt_history_dir, exist_ok=True)
+
+        return save_path, usage_log_path, playbook_dir, prompt_history_dir, log_dir
+
+    def _checkpoint_path(self, save_path: str) -> str:
+        return os.path.join(save_path, "checkpoint_state.json")
+
+    def _save_checkpoint(self, save_path: str, state: Dict[str, Any]) -> None:
+        with open(self._checkpoint_path(save_path), "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+    def _load_checkpoint(self, save_path: str) -> Optional[Dict[str, Any]]:
+        checkpoint_path = self._checkpoint_path(save_path)
+        if not os.path.exists(checkpoint_path):
+            return None
+        with open(checkpoint_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _append_progress_log(self, save_path: str, payload: Dict[str, Any]) -> None:
+        progress_path = os.path.join(save_path, "training_progress.jsonl")
+        with open(progress_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
     
     def run(
         self,
@@ -230,11 +269,12 @@ class ACE:
         
         # Setup paths based on mode
         if mode == 'eval_only':
-            save_path, log_dir = self._setup_paths(save_dir, task_name, mode)
+            save_path, log_dir = self._setup_paths(save_dir, task_name, mode, config)
             usage_log_path = None
             playbook_dir = None
+            prompt_history_dir = None
         else:
-            save_path, usage_log_path, playbook_dir, log_dir = self._setup_paths(save_dir, task_name, mode)
+            save_path, usage_log_path, playbook_dir, prompt_history_dir, log_dir = self._setup_paths(save_dir, task_name, mode, config)
         
         # Save configuration
         config_path = os.path.join(save_path, "run_config.json")
@@ -272,7 +312,7 @@ class ACE:
             # 1. Run initial test if test_samples provided
             if test_samples:
                 print(f"\n{'='*60}")
-                print(f"INITIAL TEST (before training)")
+                print(f"初始测试（训练前）")
                 print(f"{'='*60}\n")
                 initial_test_results = self._run_test(
                     test_samples=test_samples,
@@ -288,7 +328,7 @@ class ACE:
             
             # 2. Run offline training
             print(f"\n{'='*60}")
-            print(f"STARTING OFFLINE TRAINING")
+            print(f"开始离线训练")
             print(f"{'='*60}\n")
             training_results = self._offline_train(
                 train_samples=train_samples,
@@ -298,6 +338,7 @@ class ACE:
                 save_path=save_path,
                 usage_log_path=usage_log_path,
                 playbook_dir=playbook_dir,
+                prompt_history_dir=prompt_history_dir,
                 log_dir=log_dir
             )
             results['training_results'] = training_results
@@ -305,7 +346,7 @@ class ACE:
             # 3. Run final test if test_samples provided
             if test_samples:
                 print(f"\n{'='*60}")
-                print(f"FINAL TEST (with best playbook)")
+                print(f"最终测试（最佳 playbook）")
                 print(f"{'='*60}\n")
                 final_test_results = self._run_test(
                     test_samples=test_samples,
@@ -323,7 +364,7 @@ class ACE:
             # ONLINE MODE WORKFLOW
             # 1. Run initial test
             print(f"\n{'='*60}")
-            print(f"INITIAL TEST (before training)")
+            print(f"初始测试（训练前）")
             print(f"{'='*60}\n")
             initial_test_results = self._run_test(
                 test_samples=test_samples,
@@ -348,6 +389,7 @@ class ACE:
                 save_path=save_path,
                 usage_log_path=usage_log_path,
                 playbook_dir=playbook_dir,
+                prompt_history_dir=prompt_history_dir,
                 log_dir=log_dir
             )
             results['online_test_results'] = online_results
@@ -453,7 +495,8 @@ class ACE:
         usage_log_path: str,
         log_dir: str,
         config_params: Dict[str, Any],
-        total_samples: int
+        total_samples: int,
+        prompt_history_dir: Optional[str] = None,
     ) -> Tuple[str, str, Dict[str, Any]]:
         """
         Train on a single sample with reflection and curation.
@@ -478,14 +521,21 @@ class ACE:
         token_budget = config_params['token_budget']
         use_json_mode = config_params['use_json_mode']
         no_ground_truth = config_params['no_ground_truth']
+        context_max_chars = int(config_params.get('context_max_chars', 1600) or 0)
+        question_max_chars = int(config_params.get('question_max_chars', 800) or 0)
+        enable_post_train_generation = bool(config_params.get('enable_post_train_generation', True))
         
         # Extract sample data
         question = task_dict.get("question", "")
         context = task_dict.get("context", "")
         target = task_dict.get("target", "")
+        if question_max_chars > 0 and len(question) > question_max_chars:
+            question = question[:question_max_chars]
+        if context_max_chars > 0 and len(context) > context_max_chars:
+            context = context[-context_max_chars:]
         
         # STEP 1: Initial generation (pre-train)
-        print("Generating initial answer...")
+        print("生成初始答案...")
         gen_response, bullet_ids, call_info = self.generator.generate(
             question=question,
             playbook=self.playbook,
@@ -501,7 +551,7 @@ class ACE:
         is_correct = data_processor.answer_is_correct(final_answer, target)
         pre_train_answer = final_answer
         
-        print(f"Correct: {is_correct}")
+        print(f"是否正确: {is_correct}")
         
         # Log bullet usage
         log_bullet_usage(usage_log_path, epoch, step, task_dict, bullet_ids,
@@ -523,7 +573,7 @@ class ACE:
         if not is_correct:
             # For incorrect answers - iterate reflection rounds
             for round_num in range(max_num_rounds):
-                print(f"Reflection round {round_num + 1}/{max_num_rounds}")
+                print(f"反思轮次 {round_num + 1}/{max_num_rounds}")
                 
                 # Get bullets for reflector
                 playbook_bullets = extract_playbook_bullets(
@@ -564,7 +614,7 @@ class ACE:
                 final_answer = extract_answer(gen_response)
                 
                 if data_processor.answer_is_correct(final_answer, target):
-                    print(f"Corrected after reflection round {round_num + 1}!")
+                    print(f"在第 {round_num + 1} 轮反思后修正成功！")
                     is_correct = True
                     break
         
@@ -629,23 +679,34 @@ class ACE:
                     merge=True
                 )
         
+
+        if prompt_history_dir:
+            prompt_snapshot_path = os.path.join(
+                prompt_history_dir,
+                f"epoch_{epoch}_step_{step}_prompt.txt"
+            )
+            with open(prompt_snapshot_path, "w", encoding="utf-8") as f:
+                f.write(self.playbook)
+
         # STEP 4: Post-curator generation
-        gen_response, _, _ = self.generator.generate(
-            question=question,
-            playbook=self.playbook,
-            context=context,
-            reflection="(empty)",
-            use_json_mode=use_json_mode,
-            call_id=f"{step_id}_post_curate",
-            log_dir=log_dir
-        )
-        
-        final_answer = extract_answer(gen_response)
-        post_train_answer = final_answer
-        
-        post_train_is_correct = data_processor.answer_is_correct(final_answer, target)
+        if enable_post_train_generation:
+            gen_response, _, _ = self.generator.generate(
+                question=question,
+                playbook=self.playbook,
+                context=context,
+                reflection="(empty)",
+                use_json_mode=use_json_mode,
+                call_id=f"{step_id}_post_curate",
+                log_dir=log_dir
+            )
+            final_answer = extract_answer(gen_response)
+            post_train_answer = final_answer
+            post_train_is_correct = data_processor.answer_is_correct(final_answer, target)
+        else:
+            post_train_answer = pre_train_answer
+            post_train_is_correct = is_correct
         tracking_dict["post_train_result"] = {
-            "final_answer": final_answer,
+            "final_answer": post_train_answer,
             "is_correct": post_train_is_correct,
             "playbook_num_tokens": count_tokens(self.playbook),
             "playbook_length": len(self.playbook)
@@ -662,65 +723,71 @@ class ACE:
         save_path: str,
         usage_log_path: str,
         playbook_dir: str,
+        prompt_history_dir: str,
         log_dir: str
     ) -> Dict[str, Any]:
-        """
-        Run offline training
-        
-        Args:
-            train_samples: List of training samples
-            val_samples: List of validation samples
-            data_processor: Data processor instance for the task
-            config: Configuration dictionary
-            save_path: Path to save results
-            usage_log_path: Path for bullet usage logging
-            playbook_dir: Directory for intermediate playbooks
-            log_dir: Directory for detailed logs
-            
-        Returns:
-            Dictionary with training results
-        """
-        # Extract configuration using helper
+        """Run offline training with checkpoint/resume support."""
         config_params = self._extract_config_params(config)
-        task_name = config_params['task_name']
         num_epochs = config_params['num_epochs']
         eval_steps = config_params['eval_steps']
         save_steps = config_params['save_steps']
         test_workers = config_params['test_workers']
         use_json_mode = config_params['use_json_mode']
         curator_frequency = config_params['curator_frequency']
-        
-        # Initialize tracking
+
+        max_train_samples = int(config_params.get('max_train_samples', 0) or 0)
+        max_val_samples = int(config_params.get('max_val_samples', 0) or 0)
+        if max_train_samples > 0:
+            train_samples = train_samples[:max_train_samples]
+        if max_val_samples > 0:
+            val_samples = val_samples[:max_val_samples]
+
         results = []
         pre_train_post_train_results = []
         error_logs = []
         best_accuracy = 0.0
         self.best_playbook = self.playbook
 
-        print(f"Total epochs: {num_epochs}")
-        print(f"Train samples per epoch: {len(train_samples)}")
-        print(f"Val samples: {len(val_samples)}")
-        print(f"Curator frequency: every {curator_frequency} steps")
-        print(f"Evaluation frequency: every {eval_steps} steps\n")
-        
-        # Training loop
-        for epoch in range(1, num_epochs + 1):
-            print(f"\n{'='*60}")
-            print(f"EPOCH {epoch}/{num_epochs}")
-            print(f"{'='*60}")
-            
+        start_epoch = 1
+        start_step = 1
+        if config_params.get('resume'):
+            checkpoint = self._load_checkpoint(save_path)
+            if checkpoint and checkpoint.get('mode') == 'offline':
+                print(f"[续训] 检测到离线训练 checkpoint: {self._checkpoint_path(save_path)}")
+                start_epoch = int(checkpoint.get('epoch', 1) or 1)
+                start_step = int(checkpoint.get('step', 0) or 0) + 1
+                best_accuracy = float(checkpoint.get('best_accuracy', 0.0) or 0.0)
+                results = checkpoint.get('results', [])
+                error_logs = checkpoint.get('error_logs', [])
+                pre_train_post_train_results = checkpoint.get('pre_train_post_train_results', [])
+                self.playbook = checkpoint.get('playbook', self.playbook)
+                self.best_playbook = checkpoint.get('best_playbook', self.playbook)
+                self.next_global_id = checkpoint.get('next_global_id', self.next_global_id)
+            else:
+                print(f"[续训] 未找到可用 checkpoint，将从头开始。目录: {save_path}")
+
+        print(f"总轮数: {num_epochs}")
+        print(f"每轮训练样本数: {len(train_samples)}")
+        print(f"验证样本数: {len(val_samples)}")
+        print(f"Curator 频率: 每 {curator_frequency} 步")
+        print(f"评估频率: 每 {eval_steps} 步")
+
+        for epoch in range(start_epoch, num_epochs + 1):
+            print("\n" + "=" * 60)
+            print(f"第 {epoch}/{num_epochs} 轮")
+            print("=" * 60)
+
             epoch_answers_pre_train = []
             epoch_targets_pre_train = []
             epoch_answers_post_train = []
             epoch_targets_post_train = []
-            
-            for step, task_dict in enumerate(train_samples):
-                step += 1
-                print(f"\n--- Step {step}/{len(train_samples)} ---")
-                
+
+            for step, task_dict in enumerate(train_samples, start=1):
+                if epoch == start_epoch and step < start_step:
+                    continue
+                print(f"\n--- 步骤 {step}/{len(train_samples)} ---")
+
                 target = task_dict.get("target", "")
-                
-                # Use helper method for training single sample
                 pre_train_answer, post_train_answer, tracking_dict = self._train_single_sample(
                     task_dict=task_dict,
                     data_processor=data_processor,
@@ -730,133 +797,124 @@ class ACE:
                     usage_log_path=usage_log_path,
                     log_dir=log_dir,
                     config_params=config_params,
-                    total_samples=len(train_samples)
+                    total_samples=len(train_samples),
+                    prompt_history_dir=prompt_history_dir,
                 )
-                
-                # Collect answers for accuracy calculation
+
                 epoch_answers_pre_train.append(pre_train_answer)
                 epoch_targets_pre_train.append(target)
                 epoch_answers_post_train.append(post_train_answer)
                 epoch_targets_post_train.append(target)
-                
-                # Track pre-train and post-train results
+
                 pre_train_post_train_result = {
                     "epoch": epoch,
                     "step": step,
                     "target": target,
-                    **tracking_dict
+                    **tracking_dict,
                 }
                 pre_train_post_train_results.append(pre_train_post_train_result)
-                
-                # Save intermediate playbook
+
+                self._append_progress_log(save_path, {
+                    "mode": "offline",
+                    "epoch": epoch,
+                    "step": step,
+                    "pre_train_is_correct": tracking_dict["pre_train_result"]["is_correct"],
+                    "post_train_is_correct": tracking_dict["post_train_result"]["is_correct"],
+                    "playbook_tokens": tracking_dict["post_train_result"]["playbook_num_tokens"],
+                })
+
+                self._save_checkpoint(save_path, {
+                    "mode": "offline",
+                    "epoch": epoch,
+                    "step": step,
+                    "best_accuracy": best_accuracy,
+                    "playbook": self.playbook,
+                    "best_playbook": self.best_playbook,
+                    "next_global_id": self.next_global_id,
+                    "results": results,
+                    "error_logs": error_logs,
+                    "pre_train_post_train_results": pre_train_post_train_results,
+                })
+
                 if step % save_steps == 0:
-                    intermediate_path = os.path.join(
-                        playbook_dir, f"epoch_{epoch}_step_{step}_playbook.txt"
-                    )
+                    intermediate_path = os.path.join(playbook_dir, f"epoch_{epoch}_step_{step}_playbook.txt")
                     with open(intermediate_path, "w") as f:
                         f.write(self.playbook)
-                
-                # Periodic evaluation
+
                 if step % eval_steps == 0:
-                    print(f"\n{'='*40}")
-                    print(f"EVALUATION AT EPOCH {epoch}, STEP {step}")
-                    print(f"{'='*40}")
-                    
-                    # Compute training accuracies
-                    pre_train_accuracy = data_processor.evaluate_accuracy(
-                        epoch_answers_pre_train, epoch_targets_pre_train
-                    )
-                    post_train_accuracy = data_processor.evaluate_accuracy(
-                        epoch_answers_post_train, epoch_targets_post_train
-                    )
-                    
-                    # Validation evaluation
+                    print("\n" + "=" * 40)
+                    print(f"评估：第 {epoch} 轮，第 {step} 步")
+                    print("=" * 40)
+
+                    pre_train_accuracy = data_processor.evaluate_accuracy(epoch_answers_pre_train, epoch_targets_pre_train)
+                    post_train_accuracy = data_processor.evaluate_accuracy(epoch_answers_post_train, epoch_targets_post_train)
+
                     val_results = {}
+                    val_error_log = {"errors": []}
                     if val_samples:
                         val_results, val_error_log = evaluate_test_set(
-                            data_processor, self.generator, self.playbook, 
-                            val_samples, self.max_tokens, log_dir, 
-                            max_workers=test_workers, use_json_mode=use_json_mode
+                            data_processor,
+                            self.generator,
+                            self.playbook,
+                            val_samples,
+                            self.max_tokens,
+                            log_dir,
+                            max_workers=test_workers,
+                            use_json_mode=use_json_mode,
                         )
-                    
+
                     result = {
                         "epoch": epoch,
                         "step": step,
                         "train_result": {
                             "pre_train_accuracy": pre_train_accuracy,
-                            "post_train_accuracy": post_train_accuracy
+                            "post_train_accuracy": post_train_accuracy,
                         },
                         "val_result": val_results,
                         "playbook_num_tokens": count_tokens(self.playbook),
                         "playbook_length": len(self.playbook),
-                        "playbook_stats": get_playbook_stats(self.playbook)
+                        "playbook_stats": get_playbook_stats(self.playbook),
                     }
                     results.append(result)
                     error_logs.append({
                         "epoch": epoch,
                         "step": step,
                         "val_results": val_results,
-                        "error_log": val_error_log
+                        "error_log": val_error_log,
                     })
 
-                    # Track best playbook
                     if val_results:
                         acc = val_results["accuracy"]
                         if acc > best_accuracy:
                             best_accuracy = acc
                             self.best_playbook = self.playbook
-                            print(f"🎉 New best accuracy: {best_accuracy:.3f}")
-                    
-                    # Save results
-                    results_path = os.path.join(save_path, "train_results.json")
-                    with open(results_path, "w") as f:
-                        json.dump({
-                            "best_accuracy": best_accuracy,
-                            "results": results,
-                        }, f, indent=2)
-                    
-                    error_logs_path = os.path.join(save_path, "val_results.json")
-                    with open(error_logs_path, "w") as f:
+                            print(f"🎉 新最佳准确率: {best_accuracy:.3f}")
+
+                    with open(os.path.join(save_path, "train_results.json"), "w") as f:
+                        json.dump({"best_accuracy": best_accuracy, "results": results}, f, indent=2)
+                    with open(os.path.join(save_path, "val_results.json"), "w") as f:
                         json.dump(error_logs, f, indent=2)
-            
-            # End of epoch - save final playbook
-            epoch_playbook_path = os.path.join(
-                playbook_dir, f"epoch_{epoch}_final_playbook.txt"
-            )
-            with open(epoch_playbook_path, "w") as f:
+
+            with open(os.path.join(playbook_dir, f"epoch_{epoch}_final_playbook.txt"), "w") as f:
                 f.write(self.playbook)
 
-        # Save training results
-        results_path = os.path.join(save_path, "train_results.json")
-        with open(results_path, "w") as f:
-            json.dump({
-                "best_accuracy": best_accuracy,
-                "results": results,
-            }, f, indent=2)
-        
-        pre_train_post_train_results_path = os.path.join(save_path, "pre_train_post_train_results.json")
-        with open(pre_train_post_train_results_path, "w") as f:
+        with open(os.path.join(save_path, "train_results.json"), "w") as f:
+            json.dump({"best_accuracy": best_accuracy, "results": results}, f, indent=2)
+        with open(os.path.join(save_path, "pre_train_post_train_results.json"), "w") as f:
             json.dump(pre_train_post_train_results, f, indent=2)
-        
-        # Save final playbook
-        final_playbook_path = os.path.join(save_path, f"final_playbook.txt")
-        with open(final_playbook_path, "w") as f:
+        with open(os.path.join(save_path, "final_playbook.txt"), "w") as f:
             f.write(self.playbook)
-        
-        # Save best playbook
-        best_playbook_path = os.path.join(save_path, f"best_playbook.txt")
-        with open(best_playbook_path, "w") as f:
+        with open(os.path.join(save_path, "best_playbook.txt"), "w") as f:
             f.write(self.best_playbook)
-        
-        print(f"\n{'='*60}")
-        print(f"OFFLINE TRAINING COMPLETE")
-        print(f"{'='*60}")
-        print(f"Best Validation Accuracy: {best_accuracy:.3f}")
-        print(f"{'='*60}\n")
+
+        print("\n" + "=" * 60)
+        print("离线训练完成")
+        print("=" * 60)
+        print(f"最佳验证准确率: {best_accuracy:.3f}")
+        print("=" * 60 + "\n")
 
         return {"best_validation_accuracy": best_accuracy}
 
-    
     def test(
         self,
         test_samples: List[Dict[str, Any]],
@@ -906,6 +964,7 @@ class ACE:
         save_path: str,
         usage_log_path: str,
         playbook_dir: str,
+        prompt_history_dir: str,
         log_dir: str
     ) -> Dict[str, Any]:
         """
@@ -949,16 +1008,29 @@ class ACE:
         total_count = 0
         all_test_errors = []
         window_test_results = []
-        print(f"Total samples: {len(test_samples)}")
-        print(f"Window size: {online_eval_frequency}")
-        print(f"Number of windows: {(len(test_samples) + online_eval_frequency - 1) // online_eval_frequency}")
-        print(f"Curator frequency: every {curator_frequency} steps")
+        print(f"总样本数: {len(test_samples)}")
+        print(f"窗口大小: {online_eval_frequency}")
+        print(f"窗口数量: {(len(test_samples) + online_eval_frequency - 1) // online_eval_frequency}")
+        print(f"Curator 频率: 每 {curator_frequency} 步")
         
         # Split samples into windows
         num_windows = (len(test_samples) + online_eval_frequency - 1) // online_eval_frequency
         
         epoch = 1  # Always 1 epoch
         global_step = 0
+        completed_global_step = 0
+
+        if config_params.get('resume'):
+            checkpoint = self._load_checkpoint(save_path)
+            if checkpoint and checkpoint.get('mode') == 'online':
+                print(f"[续训] 检测到在线训练 checkpoint: {self._checkpoint_path(save_path)}")
+                self.playbook = checkpoint.get('playbook', self.playbook)
+                self.best_playbook = checkpoint.get('best_playbook', self.best_playbook)
+                self.next_global_id = checkpoint.get('next_global_id', self.next_global_id)
+                train_results = checkpoint.get('train_results', train_results)
+                pre_train_post_train_results = checkpoint.get('pre_train_post_train_results', pre_train_post_train_results)
+                window_test_results = checkpoint.get('window_test_results', window_test_results)
+                completed_global_step = int(checkpoint.get('global_step', 0) or 0)
         
         for window_idx in range(num_windows):
             start_idx = window_idx * online_eval_frequency
@@ -967,7 +1039,7 @@ class ACE:
             
             print(f"\n{'='*60}")
             print(f"WINDOW {window_idx + 1}/{num_windows}")
-            print(f"Samples {start_idx} to {end_idx - 1}")
+            print(f"样本范围 {start_idx} 到 {end_idx - 1}")
             print(f"{'='*60}")
             
             # =================================================================
@@ -1016,7 +1088,7 @@ class ACE:
             # Calculate cumulative test accuracy so far
             cumulative_test_accuracy = correct_count / total_count
             
-            print(f"Window {window_idx + 1} test accuracy: {window_accuracy:.3f}")
+            print(f"窗口 {window_idx + 1} 测试准确率: {window_accuracy:.3f}")
             print(f"Cumulative test accuracy so far: {cumulative_test_accuracy:.3f} "
                   f"({total_count} samples)")
             
@@ -1033,6 +1105,8 @@ class ACE:
             for local_step, task_dict in enumerate(window_samples):
                 global_step += 1
                 local_step += 1
+                if global_step <= completed_global_step:
+                    continue
                 
                 print(f"\n--- Window {window_idx + 1}, Step {local_step}/{len(window_samples)} "
                       f"(Global step {global_step}) ---")
@@ -1049,7 +1123,8 @@ class ACE:
                     usage_log_path=usage_log_path,
                     log_dir=log_dir,
                     config_params=config_params,
-                    total_samples=len(test_samples)
+                    total_samples=len(test_samples),
+                    prompt_history_dir=prompt_history_dir
                 )
                 
                 # Collect answers for accuracy calculation
@@ -1066,6 +1141,27 @@ class ACE:
                     **tracking_dict
                 }
                 pre_train_post_train_results.append(pre_train_post_train_result)
+
+                self._append_progress_log(save_path, {
+                    "mode": "online",
+                    "window": window_idx + 1,
+                    "global_step": global_step,
+                    "pre_train_is_correct": tracking_dict["pre_train_result"]["is_correct"],
+                    "post_train_is_correct": tracking_dict["post_train_result"]["is_correct"],
+                    "playbook_tokens": tracking_dict["post_train_result"]["playbook_num_tokens"],
+                })
+
+                self._save_checkpoint(save_path, {
+                    "mode": "online",
+                    "window_idx": window_idx,
+                    "global_step": global_step,
+                    "playbook": self.playbook,
+                    "best_playbook": self.best_playbook,
+                    "next_global_id": self.next_global_id,
+                    "train_results": train_results,
+                    "pre_train_post_train_results": pre_train_post_train_results,
+                    "window_test_results": window_test_results,
+                })
                 
                 # Save intermediate playbook
                 if global_step % save_steps == 0:
@@ -1110,7 +1206,7 @@ class ACE:
         
         # All windows complete
         print(f"\n{'='*60}")
-        print(f"ONLINE TRAIN AND TEST COMPLETE")
+        print(f"在线训练与测试完成")
         print(f"{'='*60}")
         
         # Calculate final cumulative test accuracy

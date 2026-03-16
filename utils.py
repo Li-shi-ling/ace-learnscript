@@ -13,6 +13,7 @@ load_dotenv()
 
 def initialize_clients(api_provider):
     """Initialize separate clients for generator, reflector, and curator"""
+    provider_label = api_provider
     if api_provider == "sambanova":
         # Use SambaNova API
         base_url = "https://api.sambanova.ai/v1"
@@ -31,14 +32,29 @@ def initialize_clients(api_provider):
         api_key = os.getenv('OPENAI_API_KEY', '')
         if not api_key:
             raise ValueError("OpenAI api key not found in environment variables")
+    elif api_provider == "openai_compatible":
+        # Use any OpenAI-compatible endpoint
+        base_url = os.getenv('OPENAI_COMPATIBLE_BASE_URL', '').strip() or os.getenv('OPENAI_API_BASE', '').strip()
+        api_key = (
+            os.getenv('OPENAI_COMPATIBLE_API_KEY', '').strip()
+            or os.getenv('OPENAI_API_KEY', '').strip()
+        )
+        if not base_url:
+            raise ValueError("OPENAI_COMPATIBLE_BASE_URL (or OPENAI_API_BASE) not found in environment variables")
+        if not api_key:
+            raise ValueError("OPENAI_COMPATIBLE_API_KEY (or OPENAI_API_KEY) not found in environment variables")
+        provider_label = f"openai_compatible ({base_url})"
     else:
-        raise ValueError((f"Invalid api_provider name: {api_provider}. Must be 'sambanova', 'together', or 'openai'"))
+        raise ValueError(
+            f"Invalid api_provider name: {api_provider}. Must be one of "
+            f"'sambanova', 'together', 'openai', 'openai_compatible'"
+        )
         
     generator_client = openai.OpenAI(api_key=api_key, base_url=base_url)
     reflector_client = openai.OpenAI(api_key=api_key, base_url=base_url)
     curator_client = openai.OpenAI(api_key=api_key, base_url=base_url)
     
-    print("Using Together API for all models")
+    print(f"Using {provider_label} API for all models")
     return generator_client, reflector_client, curator_client
 
 def get_section_slug(section_name):

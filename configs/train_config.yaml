@@ -1,0 +1,58 @@
+{
+  "experiment": {
+    "name": "roleplay_hiro_act02",
+    "task_name": "roleplay_hiro_act02",
+    "mode": "offline",
+    "playbook_template": "style",
+    "training_objective": "优化角色扮演风格一致性，提升台词拟合度"
+  },
+  "llm": {
+    "api_provider": "openai_compatible",
+    "api_base": "${ENV:OPENAI_COMPATIBLE_BASE_URL}",
+    "api_key": "${ENV:OPENAI_COMPATIBLE_API_KEY}",
+    "critic_api_base": "${ENV:OPENAI_COMPATIBLE_BASE_URL}",
+    "critic_api_key": "${ENV:OPENAI_COMPATIBLE_API_KEY}",
+    "generator_model": "gpt-4o-mini",
+    "reflector_model": "gpt-4o-mini",
+    "curator_model": "gpt-4o-mini",
+    "critic_model": "gpt-4o",
+    "max_tokens": 4096,
+    "json_mode": false
+  },
+  "data": {
+    "source_data": "./Act_02.csv",
+    "focus_role": "hiro",
+    "role_aliases_config": "./eval/roleplay/data/role_aliases.json",
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "split_seed": 42,
+    "context_turn_window": 6,
+    "min_context_chars": 1,
+    "max_train_samples": 800,
+    "max_val_samples": 120,
+    "max_test_samples": 120
+  },
+  "training": {
+    "num_epochs": 1,
+    "max_num_rounds": 3,
+    "curator_frequency": 1,
+    "eval_steps": 100,
+    "online_eval_frequency": 15,
+    "save_steps": 50,
+    "playbook_token_budget": 80000,
+    "test_workers": 20,
+    "style_pass_threshold": 8,
+    "no_ground_truth": false,
+    "context_max_chars": 1200,
+    "question_max_chars": 600,
+    "enable_post_train_generation": false,
+    "resume": false,
+    "log_language": "zh"
+  },
+  "output": {
+    "save_dir": "./results",
+    "run_name": "roleplay_fast_demo",
+    "resume_run_path": null,
+    "initial_playbook_path": null
+  }
+}
